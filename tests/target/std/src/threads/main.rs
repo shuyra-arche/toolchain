@@ -48,6 +48,14 @@ fn main() {
                     VALUE.set(n + 1);
                     LOCAL.with(|v| assert_eq!(v.0, n + 1));
                     barrier.wait();
+                    // Concurrent mappings/unmappings may transiently return Busy.
+                    // They must not turn valid allocation/free into process abort.
+                    for round in 0..32 {
+                        let data = vec![n + round; 1024];
+                        thread::yield_now();
+                        assert!(data.iter().all(|value| *value == n + round));
+                        drop(data);
+                    }
                     for _ in 0..20 {
                         let mut guard = count.lock().unwrap();
                         thread::yield_now();

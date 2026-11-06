@@ -1,13 +1,14 @@
 diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/alloc/vanllia/mod.rs
 --- a/library/std/src/sys/alloc/vanllia/mod.rs
 +++ b/library/std/src/sys/alloc/vanllia/mod.rs
-@@ -1,19 +1,19 @@
+@@ -1,19 +1,20 @@
  //! Page-backed first allocator: no fixed heap, allocator locks or service calls.
  //! Each allocation retains its source and mapping until deallocation. This is
 -//! deliberately a single-thread implementation with task-owned Kernel handles.
 +//! usable across tasks: SpaceMembers controls the mapping, and temporary
 +//! task-local acquisition handles are released before returning the allocation.
  use crate::{alloc::Layout, ptr};
++use kernel_api::abi::call::memory::MemoryFail;
  use kernel_api::model::{
      identity::{PieToken, TeamId, VirtAddr},
      memory::{
@@ -25,16 +26,35 @@ diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/allo
      view: ViewId,
  }
  
-@@ -59,7 +59,7 @@
-         TeamId::new(0),
-         VirtAddr::new(placement.as_ptr() as usize),
-         6,
+@@ -54,13 +55,20 @@
+     }
+     .encode();
+     let placement = placement.encode();
+-    let attached = memory::attach(
+-        VirtAddr::new(range.as_ptr() as usize),
+-        TeamId::new(0),
+-        VirtAddr::new(placement.as_ptr() as usize),
+-        6,
 -        ViewControl::Caller,
-+        ViewControl::SpaceMembers,
-     );
+-    );
++    let attached = loop {
++        let result = memory::attach(
++            VirtAddr::new(range.as_ptr() as usize),
++            TeamId::new(0),
++            VirtAddr::new(placement.as_ptr() as usize),
++            6,
++            ViewControl::SpaceMembers,
++        );
++        if matches!(&result, Err(error) if matches!(error.source, MemoryFail::Busy)) {
++            kernel_client::call::room::starve();
++            continue;
++        }
++        break result;
++    };
      let (view, address) = match attached {
          Ok(value) => value,
-@@ -70,11 +70,14 @@
+         Err(_) => {
+@@ -70,11 +78,14 @@
              return ptr::null_mut();
          }
      };
@@ -50,16 +70,28 @@ diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/allo
      }
      data
  }
-@@ -83,9 +86,6 @@
+@@ -82,11 +93,16 @@
+ pub unsafe fn dealloc(data: *mut u8, _layout: Layout) {
      let header = unsafe { data.sub(size_of::<Header>()).cast::<Header>().read() };
      // Copy metadata first: Detach makes the header itself inaccessible.
-     if memory::detach(TeamId::new(0), header.view, ViewSelection::Whole).is_err() {
+-    if memory::detach(TeamId::new(0), header.view, ViewSelection::Whole).is_err() {
 -        cleanup_failure()
 -    }
 -    if memory::release(header.reference).is_err() {
-         cleanup_failure()
+-        cleanup_failure()
++    // Concurrent invalidation can refuse a mapping operation with Busy. Retry
++    // the same view identity; never read its potentially unmapped header again.
++    loop {
++        match memory::detach(TeamId::new(0), header.view, ViewSelection::Whole) {
++            Ok(()) => break,
++            Err(error) if matches!(error.source, MemoryFail::Busy) => {
++                kernel_client::call::room::starve();
++            }
++            Err(_) => cleanup_failure(),
++        }
      }
  }
+ 
 diff --git a/library/std/src/sys/pal/vanllia/mod.rs b/library/std/src/sys/pal/vanllia/mod.rs
 --- a/library/std/src/sys/pal/vanllia/mod.rs
 +++ b/library/std/src/sys/pal/vanllia/mod.rs
