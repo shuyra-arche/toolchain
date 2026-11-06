@@ -1,0 +1,12 @@
+# Generated compiler sources, build products and local installations.
+/work/
+/build/
+/dist/
+/target/
+
+# Local overrides and editor state.
+/.env
+/.env.*
+/.vscode/
+/.zed/
+.DS_Store
