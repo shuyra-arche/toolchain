@@ -117,7 +117,7 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     for (path, hash) in &stage.inputs {
         if path != "rust-src"
             && path != "compiler"
-            && elf::hash(&fs::read(root.join(path))?) != *hash
+            && source::input_hash(&root.join(path))? != *hash
         {
             return Err(format!("prepared source input changed during compilation: {path}").into());
         }

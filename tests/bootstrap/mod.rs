@@ -1,3 +1,5 @@
+mod preparation;
+
 use std::{
     fs,
     path::PathBuf,

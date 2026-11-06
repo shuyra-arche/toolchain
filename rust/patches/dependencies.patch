@@ -1,0 +1,99 @@
+diff --git a/dependencies/allocator-api2/Cargo.toml b/dependencies/allocator-api2/Cargo.toml
+--- a/dependencies/allocator-api2/Cargo.toml
++++ b/dependencies/allocator-api2/Cargo.toml
+@@ -47,3 +47,11 @@
+ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(no_global_oom_handling)"]
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
++
++[dependencies.alloc]
++package = "rustc-std-workspace-alloc"
++path = "../../library/rustc-std-workspace-alloc"
+diff --git a/dependencies/bitflags/Cargo.toml b/dependencies/bitflags/Cargo.toml
+--- a/dependencies/bitflags/Cargo.toml
++++ b/dependencies/bitflags/Cargo.toml
+@@ -118,3 +118,7 @@
+ [dev-dependencies.zerocopy]
+ version = "0.8"
+ features = ["derive"]
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/erra/Cargo.toml b/dependencies/erra/Cargo.toml
+--- a/dependencies/erra/Cargo.toml
++++ b/dependencies/erra/Cargo.toml
+@@ -76,3 +76,7 @@
+ 
+ [dev-dependencies.static_assertions]
+ version = "1"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/kernel-api/Cargo.toml b/dependencies/kernel-api/Cargo.toml
+--- a/dependencies/kernel-api/Cargo.toml
++++ b/dependencies/kernel-api/Cargo.toml
+@@ -45,7 +45,11 @@
+ default-features = false
+ 
+ [dependencies.kernel-api-macros]
+-path = "../tools/abi-macros"
++path = "../kernel-api-macros"
+ 
+ [dev-dependencies]
+ trybuild = "1.0.122"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/kernel-client/Cargo.toml b/dependencies/kernel-client/Cargo.toml
+--- a/dependencies/kernel-client/Cargo.toml
++++ b/dependencies/kernel-client/Cargo.toml
+@@ -38,4 +38,8 @@
+ default-features = false
+ 
+ [dependencies.kernel-api]
+-path = "../api"
++path = "../kernel-api"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/lock_api/Cargo.toml b/dependencies/lock_api/Cargo.toml
+--- a/dependencies/lock_api/Cargo.toml
++++ b/dependencies/lock_api/Cargo.toml
+@@ -66,3 +66,7 @@
+ version = "1.0.126"
+ optional = true
+ default-features = false
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/scopeguard/Cargo.toml b/dependencies/scopeguard/Cargo.toml
+--- a/dependencies/scopeguard/Cargo.toml
++++ b/dependencies/scopeguard/Cargo.toml
+@@ -41,3 +41,7 @@
+ [features]
+ default = ["use_std"]
+ use_std = []
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/talc/Cargo.toml b/dependencies/talc/Cargo.toml
+--- a/dependencies/talc/Cargo.toml
++++ b/dependencies/talc/Cargo.toml
+@@ -99,3 +99,7 @@
+ 
+ [target.'cfg(target_family = "wasm")'.dev-dependencies.wasm-bindgen-test]
+ version = "0.3"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"

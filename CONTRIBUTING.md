@@ -15,8 +15,13 @@ actually exists, including runnable commands and remaining verification gaps.
   `autotests = false` for Rust suites. Disable library doctests when applicable.
 - Do not add empty packages, placeholder backends, generated source copies or
   a `cluster.toml` to describe organizational boundaries.
-- Pin real upstream and cross-repository build inputs to full revisions. Keep
-  generated source checkouts and build outputs out of Git. Preserve source
+- Maintain Vanllia backend files in `rust/library/` only. Keep patches limited to
+  current upstream integration and dependency adaptations; use Git for history,
+  not layers of patches rewriting the same backend. Do not duplicate owned code
+  in patches or overwrite upstream files through the source installation step.
+- Rust follows the configured rolling channel; record actual compiler and paired
+  source fingerprints. Pin other cross-repository Git inputs to full revisions.
+  Keep generated upstream trees/build outputs out of Git and preserve source
   attribution and licensing notices.
 - Consume Kernel API/Client and service contracts. Do not introduce a reverse
   Kernel dependency or a parallel Runtime/Execution abstraction.
