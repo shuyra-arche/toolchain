@@ -23,7 +23,7 @@ jobs:
           cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
       - name: Check host contracts
         run: |
-          cargo +nightly test --locked --test bootstrap
+          cargo +nightly test --locked --test bootstrap --test qemu
           cargo +nightly clippy --locked --all-targets -- -D warnings
       - name: Prepare and build target fixture
         run: |

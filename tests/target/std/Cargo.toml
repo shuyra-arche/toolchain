@@ -30,3 +30,33 @@ name = "std-oom"
 path = "src/oom/main.rs"
 test = false
 bench = false
+
+[[bin]]
+name = "std-threads"
+path = "src/threads/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-thread-exit"
+path = "src/thread-exit/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-thread-panic"
+path = "src/thread-panic/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-tls-main"
+path = "src/tls-main/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-thread-fault"
+path = "src/thread-fault/main.rs"
+test = false
+bench = false
