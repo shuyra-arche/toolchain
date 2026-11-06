@@ -1,6 +1,6 @@
 # rust-src is obtained from the same official rustup distribution as rustc.
 # This upstream commit identifies the paired compiler/library sources; a full
-# compiler checkout is unnecessary until patches or host compiler builds exist.
+# compiler checkout is unnecessary: library patches use a private rust-src copy.
 # Upstream: https://github.com/rust-lang/rust
 toolchain = "nightly-2026-09-04"
 commit = "a69a63265cfd9e006d43137f98301b8d274ad4c9"

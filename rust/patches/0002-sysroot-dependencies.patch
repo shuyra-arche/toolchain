@@ -1,0 +1,55 @@
+diff --git a/dependencies/bitflags/Cargo.toml b/dependencies/bitflags/Cargo.toml
+index d99fc11..33f108f 100644
+--- a/dependencies/bitflags/Cargo.toml
++++ b/dependencies/bitflags/Cargo.toml
+@@ -118,3 +118,7 @@ version = "1.0.18"
+ [dev-dependencies.zerocopy]
+ version = "0.8"
+ features = ["derive"]
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/erra/Cargo.toml b/dependencies/erra/Cargo.toml
+index d0a80e0..391382c 100644
+--- a/dependencies/erra/Cargo.toml
++++ b/dependencies/erra/Cargo.toml
+@@ -76,3 +76,7 @@ default-features = false
+ 
+ [dev-dependencies.static_assertions]
+ version = "1"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/kernel-api/Cargo.toml b/dependencies/kernel-api/Cargo.toml
+index 2ef6cf8..858f880 100644
+--- a/dependencies/kernel-api/Cargo.toml
++++ b/dependencies/kernel-api/Cargo.toml
+@@ -45,7 +45,11 @@ version = "0.2.0"
+ default-features = false
+ 
+ [dependencies.kernel-api-macros]
+-path = "../tools/abi-macros"
++path = "../kernel-api-macros"
+ 
+ [dev-dependencies]
+ trybuild = "1.0.122"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"
+diff --git a/dependencies/kernel-client/Cargo.toml b/dependencies/kernel-client/Cargo.toml
+index cd4dcac..902eff7 100644
+--- a/dependencies/kernel-client/Cargo.toml
++++ b/dependencies/kernel-client/Cargo.toml
+@@ -38,4 +38,8 @@ version = "0.2.0"
+ default-features = false
+ 
+ [dependencies.kernel-api]
+-path = "../api"
++path = "../kernel-api"
++
++[dependencies.core]
++package = "rustc-std-workspace-core"
++path = "../../library/rustc-std-workspace-core"

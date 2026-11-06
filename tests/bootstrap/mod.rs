@@ -172,3 +172,43 @@ fn failed_build_invalidates_previous_success_receipt() {
     assert!(!result.status.success());
     assert!(!receipt.exists());
 }
+
+#[test]
+fn rejects_patch_paths_and_duplicates_before_source_preparation() {
+    let scratch = Scratch::new();
+    let patches = scratch.0.join("rust/patches");
+    fs::create_dir_all(&patches).unwrap();
+    fs::write(patches.join("valid.patch"), b"unused").unwrap();
+    for series in [
+        "../outside.patch",
+        "/outside.patch",
+        "sub/file.patch",
+        "",
+        "valid.patch\nvalid.patch",
+    ] {
+        fs::write(patches.join("series"), series).unwrap();
+        let result = cli()
+            .args(["prepare-std", "--root"])
+            .arg(&scratch.0)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("patch"));
+        assert!(!scratch.0.join("work").exists());
+    }
+}
+
+#[test]
+fn failed_std_build_invalidates_previous_success_receipt() {
+    let scratch = Scratch::new();
+    fs::create_dir(scratch.0.join("build")).unwrap();
+    let receipt = scratch.0.join("build/std.json");
+    fs::write(&receipt, b"previous success").unwrap();
+    let result = cli()
+        .args(["build-std", "--root"])
+        .arg(&scratch.0)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(!receipt.exists());
+}

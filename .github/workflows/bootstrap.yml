@@ -20,6 +20,7 @@ jobs:
         run: |
           cargo +nightly-2026-09-04 fmt --all -- --check
           cargo +nightly-2026-09-04 fmt --manifest-path tests/target/startup/Cargo.toml -- --check
+          cargo +nightly-2026-09-04 fmt --manifest-path tests/target/std/Cargo.toml -- --check
       - name: Check host contracts
         run: |
           cargo +nightly-2026-09-04 test --locked --test bootstrap
@@ -30,3 +31,7 @@ jobs:
           cargo +nightly-2026-09-04 run --locked -- build
           cargo +nightly-2026-09-04 run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
           cat build/bootstrap.json
+      - name: Build patched std and ordinary main consumers
+        run: |
+          cargo +nightly-2026-09-04 run --locked -- build-std
+          cat build/std.json

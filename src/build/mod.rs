@@ -1,6 +1,8 @@
 use crate::{Result, elf, source};
 use std::{collections::BTreeMap, path::Path};
 
+pub mod standard;
+
 pub fn invalidate(root: &Path) -> Result<()> {
     // A failed rebuild must not leave an earlier success receipt behind.
     match std::fs::remove_file(root.join("build/bootstrap.json")) {
