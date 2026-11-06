@@ -79,7 +79,7 @@ source and licensing notices are retained in the generated tree.
 | Normal return | Upstream `std::rt` initializes the main thread, calls user `main` and `Termination::report`, then runs std cleanup; the backend runs TLS destructors, stops other std-managed tasks and calls Kernel Client `Reap` |
 | Explicit exit / abort | `process::exit` preserves its code; panic and allocation-error handling abort with the Kernel panic reason, without unwinding |
 | Allocation | Each allocation attaches an aligned RW mapping with SpaceMembers control, then releases its temporary task-local source handle; any member can detach the mapping when freeing it |
-| Failure / realloc | Arithmetic/acquire/attach failure returns null; failed attachment releases its source; failed realloc preserves the old allocation; cleanup failure aborts without allocating |
+| Failure / realloc | Transient mapping `Busy` yields and retries; other arithmetic/acquire/attach failure returns null; failed attachment releases its source; failed realloc preserves the old allocation; cleanup failure aborts without allocating |
 
 This allocator favors a small ownership implementation over efficiency: even
 small allocations use page-backed mappings and Kernel calls. It supports aligned
@@ -138,12 +138,18 @@ not execute the programs. Outputs are under
 - `std-thread-fault`: a Kernel illegal-instruction fault must abort join rather
   than hang or return normally.
 
-Vanllia owns the opt-in `tests/toolchain/` QEMU scenario. It consumes these actual
-ELFs and their hashes, reuses its capsule encoder and timeout runner, and checks
-Kernel exit records plus clean all-tasks-exited shutdown. This directly boots the
-fixture as Kernel's initial supervisor task; it does not run System's Loader or
-claim user-mode deployment coverage. Results and input hashes are recorded in
-Vanllia's `target/toolchain/<run>/`, separately from the build receipt.
+Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
+`tests/qemu/`. It checks these ELF hashes, validates their format through the
+public inspect CLI, and encodes the Kernel boot capsule using Kernel API's public
+format and parser. The native QEMU child has a bounded timeout and captured logs.
+The test requires matching Kernel exit records and all-tasks-exited shutdown on
+one and two harts. Evidence is stored under `target/qemu/<run>/`, separately from
+the build receipt.
+
+This directly boots the fixture as Kernel's initial supervisor task; it does not
+run System's Loader or claim user-mode deployment coverage. Vanllia owns tests
+that exercise its actual composition, artifact handoff and System Loader path.
+The Toolchain suite does not depend on Vanllia or its build library.
 
 ## Executable contract
 
@@ -172,7 +178,7 @@ The fixture does not implement the legacy Env/Execution startup handshake.
 cargo +nightly fmt --all -- --check
 cargo +nightly fmt --manifest-path tests/target/startup/Cargo.toml -- --check
 cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
-cargo +nightly test --locked --test bootstrap
+cargo +nightly test --locked --test bootstrap --test qemu
 cargo +nightly clippy --locked --all-targets -- -D warnings
 cargo +nightly run --locked -- build
 ```
@@ -188,7 +194,8 @@ Vanllia, with observed task termination and bounded failure/timeout handling.
 The std fixtures are verified through direct-Kernel QEMU execution on one and
 two harts. System-mediated
 execution and hardware remain unverified. Toolchain CI checks host behavior and
-target compilation; Vanllia owns the explicit QEMU scenario.
+target compilation and the native-child timeout regression. Direct Kernel QEMU
+execution is opt-in in this repository; Vanllia owns assembled-system scenarios.
 
 The initial assembly attempt stopped during System's Kernel macro source-overlay
 resolution, before target compilation. The reproduction and execution acceptance
@@ -205,6 +212,7 @@ are tracked in [Vanllia #19](https://github.com/shuyra-arche/vanllia/issues/19).
 | `src/elf/mod.rs` | Inspect the bootstrap executable contract |
 | `rust/` | Rust channel, upstream patches and custom target settings |
 | `tests/bootstrap/mod.rs` | Host CLI contract tests |
+| `tests/qemu/mod.rs` | Direct Kernel runtime acceptance and test-only boot/process helpers |
 | `tests/target/startup/` | Bootstrap fixture, linker script and Unit declaration |
 | `tests/target/std/` | Main, allocation, thread/TLS and termination consumers |
 

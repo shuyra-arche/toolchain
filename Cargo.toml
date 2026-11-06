@@ -20,3 +20,10 @@ toml = "1"
 [[test]]
 name = "bootstrap"
 path = "tests/bootstrap/mod.rs"
+
+[dev-dependencies]
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
+
+[[test]]
+name = "qemu"
+path = "tests/qemu/mod.rs"
