@@ -25,6 +25,6 @@ actually exists, including runnable commands and remaining verification gaps.
 - Treat compiler/LLVM host requirements separately from target-library
   requirements. The Vanllia backend should not require libc or a POSIX shim.
 
-There is currently no build command or test harness. The first implementation
-PR must provide a reproducible command, required inputs and a concrete acceptance
-result. Add CI only after running that command successfully.
+Use the build and verification commands in README. Keep host checks, target
+compilation and guest execution explicit in PR evidence. Add CI gates only after
+running the corresponding real command successfully.
