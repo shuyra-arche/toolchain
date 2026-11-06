@@ -1,6 +1,8 @@
 use crate::{Result, elf, source};
 use std::{collections::BTreeMap, path::Path};
 
+pub mod standard;
+
 pub fn invalidate(root: &Path) -> Result<()> {
     // A failed rebuild must not leave an earlier success receipt behind.
     match std::fs::remove_file(root.join("build/bootstrap.json")) {
@@ -63,8 +65,8 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
             return Err(format!("input changed during build: {path}").into());
         }
     }
-    if source::verify(config)?.source_sha256 != compiler.source_sha256 {
-        return Err("rust-src changed during build".into());
+    if serde_json::to_vec(&source::verify(config)?)? != serde_json::to_vec(&compiler)? {
+        return Err("compiler or rust-src changed during build".into());
     }
     let receipt = serde_json::json!({
         "schema": 1,

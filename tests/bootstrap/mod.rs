@@ -121,18 +121,18 @@ fn rejects_unsafe_or_unsupported_images() {
 }
 
 #[test]
-fn rejects_mutable_source_pins_before_preparing() {
+fn rejects_unsupported_host_before_preparing() {
     let scratch = Scratch::new();
     fs::create_dir(scratch.0.join("rust")).unwrap();
     fs::write(scratch.0.join("rust/source.toml"),
-        "toolchain = 'nightly'\ncommit = 'main'\nhost = 'x86_64-unknown-linux-gnu'\ntarget = 'riscv64gc-unknown-vanllia'\n").unwrap();
+        "toolchain = 'nightly'\nhost = 'aarch64-unknown-linux-gnu'\ntarget = 'riscv64gc-unknown-vanllia'\n").unwrap();
     let result = cli()
         .args(["prepare", "--root"])
         .arg(&scratch.0)
         .output()
         .unwrap();
     assert!(!result.status.success());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("full 40-character revision"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("Linux x86_64 -> RV64 Vanllia"));
     assert!(!scratch.0.join("build").exists());
 }
 
@@ -171,4 +171,96 @@ fn failed_build_invalidates_previous_success_receipt() {
         .unwrap();
     assert!(!result.status.success());
     assert!(!receipt.exists());
+}
+
+#[test]
+fn rejects_patch_paths_and_duplicates_before_source_preparation() {
+    let scratch = Scratch::new();
+    let patches = scratch.0.join("rust/patches");
+    fs::create_dir_all(&patches).unwrap();
+    fs::write(patches.join("valid.patch"), b"unused").unwrap();
+    for series in [
+        "../outside.patch",
+        "/outside.patch",
+        "sub/file.patch",
+        "",
+        "valid.patch\nvalid.patch",
+    ] {
+        fs::write(patches.join("series"), series).unwrap();
+        let result = cli()
+            .args(["prepare-std", "--root"])
+            .arg(&scratch.0)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("patch"));
+        assert!(!scratch.0.join("work").exists());
+    }
+}
+
+#[test]
+fn failed_std_build_invalidates_previous_success_receipt() {
+    let scratch = Scratch::new();
+    fs::create_dir(scratch.0.join("build")).unwrap();
+    let receipt = scratch.0.join("build/std.json");
+    fs::write(&receipt, b"previous success").unwrap();
+    let result = cli()
+        .args(["build-std", "--root"])
+        .arg(&scratch.0)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(!receipt.exists());
+}
+
+#[test]
+fn preparation_records_selected_compiler_without_a_revision_pin() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let bin = scratch.0.join("bin");
+    let sysroot = scratch.0.join("sysroot");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir(scratch.0.join("rust")).unwrap();
+    fs::write(scratch.0.join("rust/source.toml"),
+        "toolchain = 'nightly'\nhost = 'x86_64-unknown-linux-gnu'\ntarget = 'riscv64gc-unknown-vanllia'\n").unwrap();
+    for file in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "core/src/lib.rs",
+        "compiler-builtins/Cargo.toml",
+    ] {
+        let path = sysroot.join("lib/rustlib/src/rust/library").join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "source fixture").unwrap();
+    }
+    let rustup = bin.join("rustup");
+    fs::write(&rustup, r#"#!/bin/sh
+case "$*" in
+  'toolchain install --no-self-update nightly-x86_64-unknown-linux-gnu --profile minimal --component rust-src') exit 0 ;;
+  'run nightly-x86_64-unknown-linux-gnu rustc -Vv')
+    printf '%s\n' 'rustc test-nightly' "commit-hash: $TEST_COMPILER_COMMIT" 'host: x86_64-unknown-linux-gnu' ;;
+  'run nightly-x86_64-unknown-linux-gnu rustc --print sysroot') printf '%s\n' "$TEST_SYSROOT" ;;
+  *) exit 1 ;;
+esac
+"#).unwrap();
+    fs::set_permissions(&rustup, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    for commit in [
+        "1111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222",
+    ] {
+        let result = cli()
+            .args(["prepare", "--root"])
+            .arg(&scratch.0)
+            .env("PATH", std::env::join_paths(&paths).unwrap())
+            .env("TEST_SYSROOT", &sysroot)
+            .env("TEST_COMPILER_COMMIT", commit)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+        let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(receipt["commit"], commit);
+        assert_eq!(receipt["distribution"], "nightly-x86_64-unknown-linux-gnu");
+    }
 }

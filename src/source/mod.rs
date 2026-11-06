@@ -2,11 +2,12 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, process::Command};
 
+pub mod patch;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub toolchain: String,
-    pub commit: String,
     pub host: String,
     pub target: String,
 }
@@ -15,20 +16,16 @@ impl Config {
     pub fn read(root: &Path) -> Result<Self> {
         let config: Self =
             toml::from_str(&std::fs::read_to_string(root.join("rust/source.toml"))?)?;
-        if config.commit.len() != 40 || !config.commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Rust commit must be a full 40-character revision".into());
-        }
-        let date = config.toolchain.strip_prefix("nightly-").unwrap_or("");
-        if date.len() != 10
-            || !date.bytes().enumerate().all(|(i, b)| {
-                if i == 4 || i == 7 {
-                    b == b'-'
-                } else {
-                    b.is_ascii_digit()
-                }
-            })
+        if config.toolchain.is_empty()
+            || !config
+                .toolchain
+                .starts_with(|c: char| c.is_ascii_alphanumeric())
+            || !config
+                .toolchain
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         {
-            return Err("toolchain must be a dated nightly-YYYY-MM-DD".into());
+            return Err("invalid rustup toolchain selector".into());
         }
         if config.host != "x86_64-unknown-linux-gnu" || config.target != "riscv64gc-unknown-vanllia"
         {
@@ -44,30 +41,34 @@ impl Config {
     pub fn command(&self, program: &str) -> Command {
         let mut command = Command::new("rustup");
         command.args(["run", &self.distribution(), program]);
-        // The selected distribution and target flags must not be replaced by
-        // inherited compiler wrappers, target flags or profile overrides.
-        for (name, _) in std::env::vars_os() {
-            let key = name.to_string_lossy();
-            if matches!(
-                key.as_ref(),
-                "RUSTC"
-                    | "RUSTC_WRAPPER"
-                    | "RUSTC_WORKSPACE_WRAPPER"
-                    | "RUSTFLAGS"
-                    | "RUSTDOC"
-                    | "RUSTDOCFLAGS"
-                    | "RUST_TARGET_PATH"
-                    | "RUSTUP_TOOLCHAIN"
-                    | "RUSTC_BOOTSTRAP"
-            ) || key.starts_with("CARGO_ENCODED_")
-                || key.starts_with("CARGO_TARGET_")
-                || key.starts_with("CARGO_PROFILE_")
-                || key.starts_with("CARGO_BUILD_")
-            {
-                command.env_remove(name);
-            }
-        }
+        clean_env(&mut command);
         command
+    }
+}
+
+pub fn clean_env(command: &mut Command) {
+    // The selected distribution and target flags must not be replaced by
+    // inherited compiler wrappers, target flags or profile overrides.
+    for (name, _) in std::env::vars_os() {
+        let key = name.to_string_lossy();
+        if matches!(
+            key.as_ref(),
+            "RUSTC"
+                | "RUSTC_WRAPPER"
+                | "RUSTC_WORKSPACE_WRAPPER"
+                | "RUSTFLAGS"
+                | "RUSTDOC"
+                | "RUSTDOCFLAGS"
+                | "RUST_TARGET_PATH"
+                | "RUSTUP_TOOLCHAIN"
+                | "RUSTC_BOOTSTRAP"
+        ) || key.starts_with("CARGO_ENCODED_")
+            || key.starts_with("CARGO_TARGET_")
+            || key.starts_with("CARGO_PROFILE_")
+            || key.starts_with("CARGO_BUILD_")
+        {
+            command.env_remove(name);
+        }
     }
 }
 
@@ -97,13 +98,15 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     let version = capture(config.command("rustc").arg("-Vv"))?;
     if !version
         .lines()
-        .any(|s| s == format!("commit-hash: {}", config.commit))
-        || !version
-            .lines()
-            .any(|s| s == format!("host: {}", config.host))
+        .any(|s| s == format!("host: {}", config.host))
     {
-        return Err("installed rustc does not match rust/source.toml commit/host".into());
+        return Err("installed rustc does not match rust/source.toml host".into());
     }
+    let commit = version
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .ok_or("rustc did not report its commit hash")?
+        .to_owned();
     let sysroot = capture(config.command("rustc").args(["--print", "sysroot"]))?;
     let library = Path::new(&sysroot).join("lib/rustlib/src/rust/library");
     for path in [
@@ -118,7 +121,7 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     }
     Ok(Compiler {
         distribution: config.distribution(),
-        commit: config.commit.clone(),
+        commit,
         version,
         sysroot,
         source: library.to_string_lossy().into_owned(),
@@ -126,7 +129,7 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     })
 }
 
-fn source_hash(root: &Path) -> Result<String> {
+pub fn source_hash(root: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     fn visit(root: &Path, directory: &Path, digest: &mut Sha256) -> Result<()> {
         let mut paths = std::fs::read_dir(directory)?

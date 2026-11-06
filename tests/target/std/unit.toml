@@ -1,0 +1,9 @@
+schema = 1
+id = "toolchain.std"
+
+[loader]
+image = "toolchain-std"
+
+[control]
+creation = "startup"
+ending = "transient"

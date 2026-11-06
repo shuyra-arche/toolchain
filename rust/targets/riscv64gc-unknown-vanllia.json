@@ -15,5 +15,6 @@
   "code-model": "medium",
   "panic-strategy": "abort",
   "eh-frame-header": false,
-  "emit-debug-gdb-scripts": false
+  "emit-debug-gdb-scripts": false,
+  "singlethread": true
 }

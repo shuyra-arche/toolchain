@@ -14,19 +14,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install pinned compiler and sources
-        run: rustup toolchain install nightly-2026-09-04 --profile minimal --component rust-src,rustfmt,clippy --no-self-update
+      - name: Install current nightly and sources
+        run: rustup toolchain install nightly --profile minimal --component rust-src,rustfmt,clippy --no-self-update
       - name: Check formatting
         run: |
-          cargo +nightly-2026-09-04 fmt --all -- --check
-          cargo +nightly-2026-09-04 fmt --manifest-path tests/target/startup/Cargo.toml -- --check
+          cargo +nightly fmt --all -- --check
+          cargo +nightly fmt --manifest-path tests/target/startup/Cargo.toml -- --check
+          cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
       - name: Check host contracts
         run: |
-          cargo +nightly-2026-09-04 test --locked --test bootstrap
-          cargo +nightly-2026-09-04 clippy --locked --all-targets -- -D warnings
+          cargo +nightly test --locked --test bootstrap
+          cargo +nightly clippy --locked --all-targets -- -D warnings
       - name: Prepare and build target fixture
         run: |
-          cargo +nightly-2026-09-04 run --locked -- prepare
-          cargo +nightly-2026-09-04 run --locked -- build
-          cargo +nightly-2026-09-04 run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
+          cargo +nightly run --locked -- prepare
+          cargo +nightly run --locked -- build
+          cargo +nightly run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
           cat build/bootstrap.json
+      - name: Build patched std and ordinary main consumers
+        run: |
+          cargo +nightly run --locked -- build-std
+          cat build/std.json

@@ -1,0 +1,32 @@
+[package]
+name = "toolchain-std"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autotests = false
+[workspace]
+[[bin]]
+name = "toolchain-std"
+path = "src/main.rs"
+test = false
+bench = false
+[profile.release]
+panic = "abort"
+
+[[bin]]
+name = "std-panic"
+path = "src/panic/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-exit"
+path = "src/exit/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-oom"
+path = "src/oom/main.rs"
+test = false
+bench = false

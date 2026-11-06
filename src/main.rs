@@ -21,7 +21,7 @@ fn run() -> Result<()> {
     let command = args.next().unwrap_or_default();
     if command == "--help" || command == "help" || command.is_empty() {
         println!(
-            "usage: shuyra-toolchain prepare|build [--root DIRECTORY]\n       shuyra-toolchain inspect ELF\n\nprepare installs and verifies the pinned rustc/rust-src pair\nbuild rebuilds core/compiler_builtins and validates the startup ELF\ninspect checks the bootstrap ELF contract (does not execute it)"
+            "usage: shuyra-toolchain prepare|build|prepare-std|build-std [--root DIRECTORY]\n       shuyra-toolchain inspect ELF\n\nprepare installs and verifies the selected rustc/rust-src pair\nbuild rebuilds core/compiler_builtins and validates the startup ELF\nprepare-std applies the patch series in an isolated source tree\nbuild-std builds ordinary main/allocator, panic, exit and OOM fixtures\ninspect checks the ELF contract (does not execute it)"
         );
         return Ok(());
     }
@@ -34,7 +34,11 @@ fn run() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
-    if command != "prepare" && command != "build" {
+    if command != "prepare"
+        && command != "build"
+        && command != "prepare-std"
+        && command != "build-std"
+    {
         return Err("unknown command; use --help".into());
     }
     let root = match args.next() {
@@ -51,9 +55,21 @@ fn run() -> Result<()> {
     if command == "build" {
         build::invalidate(&root)?;
     }
+    if command == "build-std" {
+        build::standard::invalidate(&root)?;
+    }
+    if command == "build-std" || command == "prepare-std" {
+        source::patch::series(&root)?;
+    }
     let config = source::Config::read(&root)?;
     if command == "prepare" {
         source::prepare(&root, &config)?;
+    } else if command == "prepare-std" {
+        let compiler = source::verify(&config)?;
+        let stage = source::patch::prepare(&root, &config, &compiler)?;
+        println!("{}", serde_json::to_string_pretty(&stage)?);
+    } else if command == "build-std" {
+        build::standard::build(&root, &config)?;
     } else {
         build::build(&root, &config)?;
     }
