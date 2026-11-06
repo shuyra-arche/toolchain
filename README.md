@@ -36,7 +36,7 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client | [`17059c2922c1084d3b816f54d02226488ddb8298`](https://github.com/shuyra-arche/kernel/tree/17059c2922c1084d3b816f54d02226488ddb8298) |
+| Kernel API/Client | [`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) |
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
 fingerprint of the installed Rust library source tree, hashes of fixture inputs,
@@ -116,7 +116,8 @@ sharded allocator. Physical page materialization stays under Kernel policy.
 `std::thread::spawn`, `Builder`, `join`, scoped threads and detached workers use
 Kernel tasks in the same Space. Kernel owns stacks and their reclamation. A
 completion flag is published after the closure and TLS cleanup; `join` acquires
-it before returning. If Kernel terminates a joined worker before cleanup, the
+it before returning. An unfinished worker is awaited with blocking Kernel Join.
+If Kernel terminates a joined worker before cleanup, the
 process aborts instead of waiting forever. Spawn failure releases the closure.
 Normal main return, explicit exit and Rust panic-abort stop the other registered
 std tasks. Raw Kernel-created tasks are outside this registry and must not be
@@ -132,9 +133,13 @@ four passes, after which remaining values may leak, as with bounded key-based
 TLS destruction. Main-thread TLS is also cleaned on normal runtime exit.
 
 Mutex, Condvar, RwLock, Once and park/unpark use upstream atomic algorithms with
-a cooperative polling backend. Waiters recheck state after yielding; this is
-correctness-first and does not provide efficient blocked futex waits or fairness
-guarantees. `Instant`, sleep and timed waits use Kernel's monotonic clock.
+Kernel conditional waits: an atomic comparison and queue insertion share the
+wake commit boundary, so a notification cannot be lost between checking and
+blocking. Wake-one returns the actual number removed; broadcast drains current
+waiters without leaving notification tokens. Queues are private to each Space.
+Only transient mapping `Busy` retries yield; ordinary waiters leave the runnable
+queue. Timeouts retain the original budget across those retries. This does not
+add fairness guarantees. `Instant`, sleep and timed waits use Kernel's monotonic clock.
 `available_parallelism` reports unavailable rather than inventing a CPU count.
 The task registry is bounded at 1024 entries, including the initial task.
 

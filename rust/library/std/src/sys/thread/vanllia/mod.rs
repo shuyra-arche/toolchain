@@ -106,17 +106,13 @@ impl Thread {
         result
     }
     pub fn join(self) {
-        while !self.done.load(Acquire) {
-            // A Kernel fault can terminate a task before Rust cleanup runs.
-            // Never wait forever for a completion flag it can no longer set.
-            if !matches!(
-                unit::join(UnitTarget::Task(self.id), Wait::POLL, false),
-                Ok(JoinReply::Pending)
-            ) && !self.done.load(Acquire)
-            {
+        if !self.done.load(Acquire) {
+            // Kernel Join blocks until exit, including faults which cannot
+            // publish Rust completion. A reaped task may already be absent.
+            let _ = unit::join(UnitTarget::Task(self.id), Wait::Forever, false);
+            if !self.done.load(Acquire) {
                 crate::sys::abort_internal();
             }
-            yield_now();
         }
     }
 }
