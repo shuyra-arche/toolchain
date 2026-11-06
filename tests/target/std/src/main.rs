@@ -1,3 +1,4 @@
+mod heap;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::Write;
 use std::process::{ExitCode, Termination};
@@ -21,6 +22,7 @@ impl Termination for Completed {
 
 fn main() -> Completed {
     let _guard = Guard;
+    heap::check();
     assert_eq!(std::thread::current().name(), Some("main"));
     assert_eq!(std::env::consts::OS, "vanllia");
     assert_eq!(std::env::args().len(), 0);
@@ -45,7 +47,7 @@ fn main() -> Completed {
                 .all(|&b| b == 0)
         );
         p.write_bytes(0xa5, layout.size());
-        // Legal Layout, but header + requested alignment exceeds isize::MAX:
+        // Legal Layout, but heap metadata + alignment exceeds isize::MAX:
         // fail without releasing or modifying the original allocation.
         let huge = (isize::MAX as usize) & !(layout.align() - 1);
         assert!(System.realloc(p, layout, huge).is_null());
@@ -65,7 +67,7 @@ fn main() -> Completed {
         for _ in 0..8 {
             assert!(System.alloc(unmappable).is_null());
         }
-        // Repeated acquire/attach/detach/release exercises Kernel handle reuse.
+        // Repeated aligned allocations exercise heap reuse and backing reclamation.
         for _ in 0..256 {
             let p = System.alloc(layout);
             assert!(!p.is_null());

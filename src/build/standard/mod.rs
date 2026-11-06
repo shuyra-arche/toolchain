@@ -90,9 +90,16 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     if libraries.contains("libc") {
         return Err("unexpected target libc dependency".into());
     }
-    if !["core", "alloc", "std", "kernel_api", "kernel_client"]
-        .iter()
-        .all(|name| libraries.contains(*name))
+    if ![
+        "core",
+        "alloc",
+        "std",
+        "kernel_api",
+        "kernel_client",
+        "talc",
+    ]
+    .iter()
+    .all(|name| libraries.contains(*name))
     {
         return Err("missing expected target library build evidence".into());
     }
@@ -110,7 +117,7 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     for (path, hash) in &stage.inputs {
         if path != "rust-src"
             && path != "compiler"
-            && elf::hash(&fs::read(root.join(path))?) != *hash
+            && source::input_hash(&root.join(path))? != *hash
         {
             return Err(format!("prepared source input changed during compilation: {path}").into());
         }

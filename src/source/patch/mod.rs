@@ -45,14 +45,31 @@ pub fn series(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+fn copy_tree(from: &Path, to: &Path, owned: bool) -> Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
-            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()), owned)?;
         } else if entry.file_type()?.is_file() {
-            fs::copy(entry.path(), to.join(entry.file_name()))?;
+            let destination = to.join(entry.file_name());
+            if owned {
+                // Owned files are additions only. A new upstream file with the
+                // same path must be reconciled, never silently overwritten.
+                let mut out = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&destination)
+                    .map_err(|error| {
+                        format!(
+                            "cannot install owned source {}: {error}",
+                            destination.display()
+                        )
+                    })?;
+                std::io::copy(&mut fs::File::open(entry.path())?, &mut out)?;
+            } else {
+                fs::copy(entry.path(), destination)?;
+            }
         } else {
             return Err(format!("unsupported source file: {}", entry.path().display()).into());
         }
@@ -69,15 +86,16 @@ pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler
     for path in [
         root.join("rust/source.toml"),
         root.join("rust/patches/series"),
-        root.join("tests/target/startup/Cargo.toml"),
-        root.join("tests/target/startup/Cargo.lock"),
+        root.join("rust/dependencies.toml"),
+        root.join("rust/dependencies.lock"),
+        root.join("rust/library"),
     ]
     .into_iter()
     .chain(patches.iter().cloned())
     {
         inputs.insert(
             path.strip_prefix(root)?.to_string_lossy().into_owned(),
-            elf::hash(&fs::read(path)?),
+            source::input_hash(&path)?,
         );
     }
     let directory = root.join("work/std-stage");
@@ -136,16 +154,33 @@ pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler
             )?;
         }
     }
-    copy_tree(Path::new(&compiler.source), &sources.join("library"))?;
+    copy_tree(Path::new(&compiler.source), &sources.join("library"), false)?;
     if source::source_hash(&sources.join("library"))? != compiler.source_sha256 {
         return Err("rust-src changed while preparing its private copy".into());
     }
+    copy_tree(&root.join("rust/library"), &sources.join("library"), true)?;
+    // Cargo resolves source inputs through a generated, never-built package.
+    // Its dependency manifest and lock are checked in; no fixture controls std.
+    let resolver = directory.join("dependencies");
+    fs::create_dir_all(&resolver)?;
+    fs::write(
+        resolver.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"shuyra-std-inputs\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[lib]\npath = \"lib.rs\"\n{}",
+            fs::read_to_string(root.join("rust/dependencies.toml"))?
+        ),
+    )?;
+    fs::write(resolver.join("lib.rs"), "#![no_std]\n")?;
+    fs::copy(
+        root.join("rust/dependencies.lock"),
+        resolver.join("Cargo.lock"),
+    )?;
     source::capture(
         config
             .command("cargo")
             .current_dir(root)
             .args(["vendor", "--locked", "--manifest-path"])
-            .arg(root.join("tests/target/startup/Cargo.toml"))
+            .arg(resolver.join("Cargo.toml"))
             .arg(sources.join("dependencies")),
     )?;
     source::capture(
@@ -169,6 +204,31 @@ pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler
                 .args(["apply", "--whitespace=error-all"])
                 .arg(&patch),
         )?;
+    }
+    // Patches may edit upstream integration points, never the owned backend.
+    fn verify_owned(from: &Path, to: &Path) -> Result<()> {
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let target = to.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                verify_owned(&entry.path(), &target)?;
+            } else if !entry.file_type()?.is_file()
+                || fs::symlink_metadata(&target)?.file_type().is_symlink()
+                || fs::read(entry.path())? != fs::read(&target)?
+            {
+                return Err(format!("patch changed owned source: {}", target.display()).into());
+            }
+        }
+        Ok(())
+    }
+    verify_owned(&root.join("rust/library"), &sources.join("library"))?;
+    for (path, expected) in &inputs {
+        if path != "rust-src"
+            && path != "compiler"
+            && source::input_hash(&root.join(path))? != *expected
+        {
+            return Err(format!("source input changed during preparation: {path}").into());
+        }
     }
     let stage = Stage {
         sysroot,

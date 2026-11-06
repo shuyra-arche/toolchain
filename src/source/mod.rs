@@ -129,6 +129,17 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     })
 }
 
+pub fn input_hash(path: &Path) -> Result<String> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        source_hash(path)
+    } else if metadata.is_file() {
+        Ok(crate::elf::hash(&std::fs::read(path)?))
+    } else {
+        Err(format!("unsupported source input: {}", path.display()).into())
+    }
+}
+
 pub fn source_hash(root: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     fn visit(root: &Path, directory: &Path, digest: &mut Sha256) -> Result<()> {
@@ -155,6 +166,9 @@ pub fn source_hash(root: &Path) -> Result<String> {
             }
         }
         Ok(())
+    }
+    if !std::fs::symlink_metadata(root)?.is_dir() {
+        return Err(format!("unsupported source directory: {}", root.display()).into());
     }
     let mut digest = Sha256::new();
     visit(root, root, &mut digest)?;

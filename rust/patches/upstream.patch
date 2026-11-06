@@ -1,10 +1,14 @@
 diff --git a/library/Cargo.toml b/library/Cargo.toml
 --- a/library/Cargo.toml
 +++ b/library/Cargo.toml
-@@ -81,6 +81,12 @@
+@@ -81,6 +81,16 @@
  ]
  
  [patch.crates-io]
++talc = { path = "../dependencies/talc" }
++allocator-api2 = { path = "../dependencies/allocator-api2" }
++lock_api = { path = "../dependencies/lock_api" }
++scopeguard = { path = "../dependencies/scopeguard" }
 +proc-macro2 = { path = "../dependencies/proc-macro2" }
 +quote = { path = "../dependencies/quote" }
 +syn = { path = "../dependencies/syn" }
@@ -14,7 +18,7 @@ diff --git a/library/Cargo.toml b/library/Cargo.toml
  # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
  rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
  rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
-@@ -88,3 +94,8 @@
+@@ -88,3 +98,8 @@
  
  # See comments in `library/windows-sys/Cargo.toml` for why this is patched
  windows-sys = { path = 'windows-sys' }
@@ -47,12 +51,13 @@ diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
  libc = { version = "0.2.191", default-features = false, features = [
      'rustc-dep-of-std',
  ], public = true }
-@@ -171,3 +171,7 @@
+@@ -171,3 +171,8 @@
  [lints.cargo]
  # panic_abort is not directly used but must be linked in
  unused_dependencies = "allow"
 +
 +[target.'cfg(target_os = "vanllia")'.dependencies]
++talc = { version = "5.1.1", default-features = false }
 +kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
 +kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
 diff --git a/library/std/build.rs b/library/std/build.rs
@@ -94,114 +99,6 @@ diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
      any(target_family = "unix", target_os = "wasi", target_os = "teeos", target_os = "trusty") => {
          mod unix;
          use unix as imp;
-diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/alloc/vanllia/mod.rs
-new file mode 100644
---- /dev/null
-+++ b/library/std/src/sys/alloc/vanllia/mod.rs
-@@ -0,0 +1,103 @@
-+//! Page-backed first allocator: no fixed heap, allocator locks or service calls.
-+//! Each allocation retains its source and mapping until deallocation. This is
-+//! deliberately a single-thread implementation with task-owned Kernel handles.
-+use crate::{alloc::Layout, ptr};
-+use kernel_api::model::{
-+    identity::{PieToken, TeamId, VirtAddr},
-+    memory::{
-+        AcquireSource, Allocation, FlatReference, PAGE_SIZE, Placement, ReferenceRange,
-+        ViewControl, ViewId, ViewSelection,
-+    },
-+};
-+use kernel_client::call::memory;
-+
-+#[derive(Clone, Copy)]
-+struct Header {
-+    reference: FlatReference,
-+    view: ViewId,
-+}
-+
-+fn cleanup_failure() -> ! {
-+    crate::sys::abort_internal()
-+}
-+
-+pub unsafe fn alloc(layout: Layout) -> *mut u8 {
-+    let align = layout.align().max(align_of::<Header>());
-+    let Some(prefix) = size_of::<Header>().checked_next_multiple_of(align) else {
-+        return ptr::null_mut();
-+    };
-+    let Some(size) = prefix
-+        .checked_add(layout.size())
-+        .and_then(|n| n.checked_next_multiple_of(PAGE_SIZE))
-+    else {
-+        return ptr::null_mut();
-+    };
-+    if size > isize::MAX as usize {
-+        return ptr::null_mut();
-+    }
-+    let Some(allocation) = Allocation::new(size, PAGE_SIZE) else {
-+        return ptr::null_mut();
-+    };
-+    let Some(placement) = Placement::lowest(align.max(PAGE_SIZE)) else {
-+        return ptr::null_mut();
-+    };
-+    let Ok(reference) = memory::acquire(AcquireSource::Allocation(allocation), PieToken::NONE)
-+    else {
-+        return ptr::null_mut();
-+    };
-+    // All validation precedes acquisition. These word arrays are the Kernel
-+    // API's codecs, not the in-memory layout of its Rust descriptor structs.
-+    let range = ReferenceRange {
-+        reference,
-+        offset: 0,
-+        count: size / PAGE_SIZE,
-+    }
-+    .encode();
-+    let placement = placement.encode();
-+    let attached = memory::attach(
-+        VirtAddr::new(range.as_ptr() as usize),
-+        TeamId::new(0),
-+        VirtAddr::new(placement.as_ptr() as usize),
-+        6,
-+        ViewControl::Caller,
-+    );
-+    let (view, address) = match attached {
-+        Ok(value) => value,
-+        Err(_) => {
-+            if memory::release(reference).is_err() {
-+                cleanup_failure()
-+            }
-+            return ptr::null_mut();
-+        }
-+    };
-+    let data = unsafe { (address.get() as *mut u8).add(prefix) };
-+    unsafe {
-+        data.sub(size_of::<Header>())
-+            .cast::<Header>()
-+            .write(Header { reference, view });
-+    }
-+    data
-+}
-+
-+pub unsafe fn dealloc(data: *mut u8, _layout: Layout) {
-+    let header = unsafe { data.sub(size_of::<Header>()).cast::<Header>().read() };
-+    // Copy metadata first: Detach makes the header itself inaccessible.
-+    if memory::detach(TeamId::new(0), header.view, ViewSelection::Whole).is_err() {
-+        cleanup_failure()
-+    }
-+    if memory::release(header.reference).is_err() {
-+        cleanup_failure()
-+    }
-+}
-+
-+pub unsafe fn alloc_zeroed(layout: Layout) -> *mut u8 {
-+    let data = unsafe { alloc(layout) };
-+    if !data.is_null() {
-+        unsafe { data.write_bytes(0, layout.size()) };
-+    }
-+    data
-+}
-+
-+pub unsafe fn realloc(data: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-+    unsafe { super::realloc_fallback(data, layout, size) }
-+}
 diff --git a/library/std/src/sys/env_consts.rs b/library/std/src/sys/env_consts.rs
 --- a/library/std/src/sys/env_consts.rs
 +++ b/library/std/src/sys/env_consts.rs
@@ -260,72 +157,6 @@ diff --git a/library/std/src/sys/pal/mod.rs b/library/std/src/sys/pal/mod.rs
      unix => {
          mod unix;
          pub use self::unix::*;
-diff --git a/library/std/src/sys/pal/vanllia/mod.rs b/library/std/src/sys/pal/vanllia/mod.rs
-new file mode 100644
---- /dev/null
-+++ b/library/std/src/sys/pal/vanllia/mod.rs
-@@ -0,0 +1,61 @@
-+//! Experimental single-thread Vanllia process entry and termination.
-+use kernel_api::model::{exit::EXIT_PANIC, identity::VirtAddr};
-+
-+pub fn unsupported<T>() -> crate::io::Result<T> {
-+    Err(unsupported_err())
-+}
-+pub fn unsupported_err() -> crate::io::Error {
-+    crate::io::Error::UNSUPPORTED_PLATFORM
-+}
-+
-+// Kernel argument words are not C strings. No service argument convention has
-+// been selected, so the Rust entry receives an empty argv, never a cast of a0.
-+core::arch::global_asm!(
-+    ".section .text.entry,\"ax\"",
-+    ".global _start",
-+    "_start:",
-+    ".option push",
-+    ".option norelax",
-+    "la gp, __global_pointer$",
-+    ".option pop",
-+    "andi t0, sp, 15",
-+    "bnez t0, __shuyra_bad_entry",
-+    "li a0, 0",
-+    "li a1, 0",
-+    "call main",
-+    "tail __shuyra_exit",
-+);
-+
-+#[unsafe(no_mangle)]
-+extern "C" fn __shuyra_bad_entry() -> ! {
-+    abort_internal()
-+}
-+
-+#[unsafe(no_mangle)]
-+extern "C" fn __shuyra_exit(code: i32) -> ! {
-+    terminate(code, "toolchain: std main returned")
-+}
-+
-+pub unsafe fn init(_argc: isize, _argv: *const *const u8, _sigpipe: u8) {}
-+pub unsafe fn cleanup() {
-+    crate::rt::thread_cleanup();
-+}
-+
-+pub fn finish(code: i32) -> ! {
-+    terminate(code, "toolchain: std process exit")
-+}
-+fn terminate(code: i32, note: &str) -> ! {
-+    kernel_client::call::room::reap(
-+        code as u32 as usize,
-+        VirtAddr::new(note.as_ptr() as usize),
-+        note.len(),
-+    )
-+}
-+pub fn abort_internal() -> ! {
-+    let note = "toolchain: std abort";
-+    kernel_client::call::room::reap(
-+        EXIT_PANIC,
-+        VirtAddr::new(note.as_ptr() as usize),
-+        note.len(),
-+    )
-+}
 diff --git a/library/std/src/sys/random/mod.rs b/library/std/src/sys/random/mod.rs
 --- a/library/std/src/sys/random/mod.rs
 +++ b/library/std/src/sys/random/mod.rs
@@ -351,65 +182,144 @@ diff --git a/library/std/src/sys/stdio/mod.rs b/library/std/src/sys/stdio/mod.rs
      any(target_family = "unix", target_os = "hermit", target_os = "wasi") => {
          mod unix;
          pub use unix::*;
-diff --git a/library/std/src/sys/stdio/vanllia/mod.rs b/library/std/src/sys/stdio/vanllia/mod.rs
-new file mode 100644
---- /dev/null
-+++ b/library/std/src/sys/stdio/vanllia/mod.rs
-@@ -0,0 +1,35 @@
-+//! Console services have not been bound. Never pretend to consume output.
-+use crate::io::{self, Read, Write};
-+pub struct Stdin;
-+pub struct Stdout;
-+pub type Stderr = Stdout;
-+impl Stdin {
-+    pub const fn new() -> Self {
-+        Self
+diff --git a/library/std/src/sys/sync/condvar/mod.rs b/library/std/src/sys/sync/condvar/mod.rs
+--- a/library/std/src/sys/sync/condvar/mod.rs
++++ b/library/std/src/sys/sync/condvar/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/futex/mod.rs b/library/std/src/sys/sync/futex/mod.rs
+--- a/library/std/src/sys/sync/futex/mod.rs
++++ b/library/std/src/sys/sync/futex/mod.rs
+@@ -1,4 +1,8 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        pub use vanllia::*;
 +    }
-+}
-+impl Stdout {
-+    pub const fn new() -> Self {
-+        Self
+     any(
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/mutex/mod.rs b/library/std/src/sys/sync/mutex/mod.rs
+--- a/library/std/src/sys/sync/mutex/mod.rs
++++ b/library/std/src/sys/sync/mutex/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/once/mod.rs b/library/std/src/sys/sync/once/mod.rs
+--- a/library/std/src/sys/sync/once/mod.rs
++++ b/library/std/src/sys/sync/once/mod.rs
+@@ -9,6 +9,7 @@
+ 
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -25,6 +26,7 @@
+         pub use futex::{Once, OnceState};
+     }
+     any(
++        target_os = "vanllia",
+         windows,
+         target_family = "unix",
+         all(target_vendor = "fortanix", target_env = "sgx"),
+diff --git a/library/std/src/sys/sync/rwlock/mod.rs b/library/std/src/sys/sync/rwlock/mod.rs
+--- a/library/std/src/sys/sync/rwlock/mod.rs
++++ b/library/std/src/sys/sync/rwlock/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -16,6 +17,7 @@
+         pub use futex::RwLock;
+     }
+     any(
++        target_os = "vanllia",
+         target_family = "unix",
+         all(target_os = "windows", target_vendor = "win7"),
+         all(target_vendor = "fortanix", target_env = "sgx"),
+diff --git a/library/std/src/sys/sync/thread_parking/mod.rs b/library/std/src/sys/sync/thread_parking/mod.rs
+--- a/library/std/src/sys/sync/thread_parking/mod.rs
++++ b/library/std/src/sys/sync/thread_parking/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -16,6 +17,7 @@
+         pub use futex::Parker;
+     }
+     any(
++        target_os = "vanllia",
+         target_os = "netbsd",
+         all(target_vendor = "fortanix", target_env = "sgx"),
+         target_os = "solid_asp3",
+diff --git a/library/std/src/sys/thread/mod.rs b/library/std/src/sys/thread/mod.rs
+--- a/library/std/src/sys/thread/mod.rs
++++ b/library/std/src/sys/thread/mod.rs
+@@ -1,4 +1,8 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        pub use vanllia::*;
 +    }
-+}
-+impl Read for Stdin {
-+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-+        Err(io::Error::UNSUPPORTED_PLATFORM)
-+    }
-+}
-+impl Write for Stdout {
-+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-+        Err(io::Error::UNSUPPORTED_PLATFORM)
-+    }
-+    fn flush(&mut self) -> io::Result<()> {
-+        Ok(())
-+    }
-+}
-+pub const STDIN_BUF_SIZE: usize = 0;
-+pub fn is_ebadf(_: &io::Error) -> bool {
-+    false
-+}
-+pub fn panic_output() -> Option<Stderr> {
-+    None
-+}
+     target_os = "hermit" => {
+         mod hermit;
+         pub use hermit::{DEFAULT_MIN_STACK_SIZE, Thread, available_parallelism, sleep, yield_now};
 diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
 --- a/library/std/src/sys/thread_local/mod.rs
 +++ b/library/std/src/sys/thread_local/mod.rs
-@@ -36,6 +36,7 @@
- cfg_select! {
-     any(
-         all(target_family = "wasm", not(target_feature = "atomics"), not(target_os = "wasi")),
-+        target_os = "vanllia",
-         target_os = "uefi",
-         target_os = "zkvm",
-         target_os = "trusty",
-@@ -115,6 +116,7 @@
+@@ -134,7 +134,7 @@
+                 use crate::rt::thread_cleanup;
+             }
          }
+-        any(target_os = "hermit", target_os = "xous") => {
++        any(target_os = "vanllia", target_os = "hermit", target_os = "xous") => {
+             // `std` is the only runtime, so it just calls the destructor functions
+             // itself when the time comes.
+             pub(crate) fn enable() {}
+@@ -164,6 +164,9 @@
+ /// with a pointer which we can get and set to store our data.
+ pub(crate) mod key {
+     cfg_select! {
++        target_os = "vanllia" => {
++            pub(super) use crate::sys::pal::tls::{Key, LazyKey, get, set};
++        }
          any(
-             all(target_family = "wasm", not(target_os = "wasi")),
-+            target_os = "vanllia",
-             target_os = "uefi",
-             target_os = "zkvm",
-             target_os = "trusty",
+             all(not(target_vendor = "apple"), not(target_family = "wasm"), target_family = "unix"),
+             all(not(target_thread_local), target_vendor = "apple"),
+diff --git a/library/std/src/sys/time/mod.rs b/library/std/src/sys/time/mod.rs
+--- a/library/std/src/sys/time/mod.rs
++++ b/library/std/src/sys/time/mod.rs
+@@ -1,4 +1,13 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        #[expect(unused)]
++        mod unsupported;
++        mod imp {
++            pub use super::unsupported::{SystemTime, UNIX_EPOCH};
++            pub use super::vanllia::Instant;
++        }
++    }
+     target_os = "motor" => {
+         use moto_rt::time as imp;
+     }
 diff --git a/library/std_detect/Cargo.toml b/library/std_detect/Cargo.toml
 --- a/library/std_detect/Cargo.toml
 +++ b/library/std_detect/Cargo.toml

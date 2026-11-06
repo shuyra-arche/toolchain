@@ -61,30 +61,57 @@ cargo +nightly run --locked -- build-std
 ```
 
 `prepare-std` copies matching Rust library sources into ignored `work/std-stage/`,
-vendors the Kernel dependency graph from the committed startup lockfile, then
-applies `rust/patches/series` with `git apply --check`. `build-std` also prepares
-this tree if needed. The installed Rust source/compiler remains unchanged. The
-private sysroot reuses immutable host libraries and copies rustc/rustc_driver so
-Cargo selects the patched sources. It is a build workspace, not a distribution.
+installs our backend from `rust/library/`, vendors the locked dependency inputs,
+and applies `rust/patches/series` with `git apply --check`. `build-std` also
+prepares this tree if needed. Installed Rust sources/compiler remain unchanged.
+The private sysroot reuses immutable host libraries and copies rustc/rustc_driver
+so Cargo selects the prepared sources. It is a build workspace, not a distribution.
 
-The backend lives in upstream `std` patches, with no separate Runtime package.
-Kernel API/Client and their no_std dependencies receive only private Cargo
-manifest adaptations to use the same `core` as std. All vendored package versions
-come from the startup lockfile, including host proc-macro dependencies. Original
-source and licensing notices are retained in the generated tree.
+| Maintained input | Responsibility |
+| --- | --- |
+| `rust/library/std/src/sys/` | Canonical Vanllia allocator, startup/TLS, threads, waits, time and unsupported console backend as ordinary Rust files |
+| `rust/patches/upstream.patch` | Current upstream platform selection, dependency declarations and other integration edits |
+| `rust/patches/dependencies.patch` | Private dependency manifest adaptations for sysroot core/alloc and relocated Kernel packages |
+| `rust/dependencies.toml` / `.lock` | External input selection and locked Cargo resolution |
+
+Backend files are maintained only in `rust/library/`, with paths relative to
+upstream `library/`; they are not duplicated inside patches. Patches describe
+the current integration, not a history of feature additions. Update a backend
+file directly, or update the relevant integration patch against the unmodified
+selected inputs. Then run `prepare-std` and `build-std`; build/boot evidence is
+still required for behavior changes. There is no separate Runtime package.
+
+Owned files may only add paths absent from upstream. Preparation refuses a path
+collision, symlinked source, or patch that changes an owned backend file. File
+content and path fingerprints invalidate the prepared tree on additions, edits
+and removals; build receipts also detect changes during compilation. Updating
+nightly may still require adapting upstream interfaces or integration hunks;
+failed patch application is reported rather than silently skipped.
+
+Dependency versions come from `rust/dependencies.lock`, including host
+proc-macro inputs. Cargo resolves them through an ignored, generated manifest
+that is never built; std does not depend on a test fixture. Package source and
+licensing notices are retained in the generated tree.
 
 | Boundary | Implemented behavior |
 | --- | --- |
 | Entry | `_start` establishes `gp`, checks stack alignment and invokes rustc's generated `main` entry; Kernel argument words are not miscast as C strings, so `std::env::args()` is empty |
 | Normal return | Upstream `std::rt` initializes the main thread, calls user `main` and `Termination::report`, then runs std cleanup; the backend runs TLS destructors, stops other std-managed tasks and calls Kernel Client `Reap` |
 | Explicit exit / abort | `process::exit` preserves its code; panic and allocation-error handling abort with the Kernel panic reason, without unwinding |
-| Allocation | Each allocation attaches an aligned RW mapping with SpaceMembers control, then releases its temporary task-local source handle; any member can detach the mapping when freeing it |
+| Allocation | A process-shared `TalcLock` heap supplies objects; `GlobalAllocSource<Pages>` obtains backing mappings with SpaceMembers control and immediately releases temporary task-local source handles |
 | Failure / realloc | Transient mapping `Busy` yields and retries; other arithmetic/acquire/attach failure returns null; failed attachment releases its source; failed realloc preserves the old allocation; cleanup failure aborts without allocating |
 
-This allocator favors a small ownership implementation over efficiency: even
-small allocations use page-backed mappings and Kernel calls. It supports aligned
-and zeroed allocation, growth and shrinking. Physical page materialization stays
-under Kernel policy.
+Talc 5.1.1 reuses and coalesces small allocations in shared heaps. Backing blocks
+start at 16 KiB and grow to fit requests; completely free heaps are returned to
+Kernel, while the first heap can remain for Talc metadata. There is no fixed heap
+or per-object mapping. Alignment, zeroing and realloc preservation are supported;
+impossible sizes are rejected before Talc's source-size arithmetic.
+
+The heap lock uses atomics and direct Kernel yield, without allocation, TLS or
+std locks. Backing allocation calls Kernel directly, never `System` recursively.
+Cross-thread frees and creator-thread exit retain the existing SpaceMembers
+ownership semantics. This is one shared heap, not a per-thread or scalable
+sharded allocator. Physical page materialization stays under Kernel policy.
 
 `std::thread::spawn`, `Builder`, `join`, scoped threads and detached workers use
 Kernel tasks in the same Space. Kernel owns stacks and their reclamation. A
@@ -176,6 +203,7 @@ The fixture does not implement the legacy Env/Execution startup handshake.
 
 ```sh
 cargo +nightly fmt --all -- --check
+rg --files --null rust/library -g '*.rs' | xargs -0 rustfmt +nightly --edition 2024 --check
 cargo +nightly fmt --manifest-path tests/target/startup/Cargo.toml -- --check
 cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
 cargo +nightly test --locked --test bootstrap --test qemu
@@ -210,7 +238,7 @@ are tracked in [Vanllia #19](https://github.com/shuyra-arche/vanllia/issues/19).
 | `src/build/standard/mod.rs` | Build/inspect std consumers and record their dependency inventory |
 | `src/source/patch/mod.rs` | Prepare and fingerprint the isolated patched source tree |
 | `src/elf/mod.rs` | Inspect the bootstrap executable contract |
-| `rust/` | Rust channel, upstream patches and custom target settings |
+| `rust/` | Rust channel, maintained backend sources, locked dependencies, integration patches and target settings |
 | `tests/bootstrap/mod.rs` | Host CLI contract tests |
 | `tests/qemu/mod.rs` | Direct Kernel runtime acceptance and test-only boot/process helpers |
 | `tests/target/startup/` | Bootstrap fixture, linker script and Unit declaration |
