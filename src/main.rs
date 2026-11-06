@@ -21,7 +21,7 @@ fn run() -> Result<()> {
     let command = args.next().unwrap_or_default();
     if command == "--help" || command == "help" || command.is_empty() {
         println!(
-            "usage: shuyra-toolchain prepare|build|prepare-std|build-std [--root DIRECTORY]\n       shuyra-toolchain inspect ELF\n\nprepare installs and verifies the pinned rustc/rust-src pair\nbuild rebuilds core/compiler_builtins and validates the startup ELF\nprepare-std applies the pinned patch series in an isolated source tree\nbuild-std builds ordinary main/allocator, panic, exit and OOM fixtures\ninspect checks the ELF contract (does not execute it)"
+            "usage: shuyra-toolchain prepare|build|prepare-std|build-std [--root DIRECTORY]\n       shuyra-toolchain inspect ELF\n\nprepare installs and verifies the selected rustc/rust-src pair\nbuild rebuilds core/compiler_builtins and validates the startup ELF\nprepare-std applies the patch series in an isolated source tree\nbuild-std builds ordinary main/allocator, panic, exit and OOM fixtures\ninspect checks the ELF contract (does not execute it)"
         );
         return Ok(());
     }

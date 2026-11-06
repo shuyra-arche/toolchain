@@ -62,7 +62,10 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 
 pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler) -> Result<Stage> {
     let patches = series(root)?;
-    let mut inputs = BTreeMap::from([("rust-src".into(), compiler.source_sha256.clone())]);
+    let mut inputs = BTreeMap::from([
+        ("rust-src".into(), compiler.source_sha256.clone()),
+        ("compiler".into(), elf::hash(&serde_json::to_vec(compiler)?)),
+    ]);
     for path in [
         root.join("rust/source.toml"),
         root.join("rust/patches/series"),

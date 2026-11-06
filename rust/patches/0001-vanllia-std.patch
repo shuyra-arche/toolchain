@@ -1,8 +1,7 @@
 diff --git a/library/Cargo.toml b/library/Cargo.toml
-index 788c990..3f9d4b7 100644
 --- a/library/Cargo.toml
 +++ b/library/Cargo.toml
-@@ -81,6 +81,12 @@ rustflags = [
+@@ -81,6 +81,12 @@
  ]
  
  [patch.crates-io]
@@ -15,7 +14,7 @@ index 788c990..3f9d4b7 100644
  # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
  rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
  rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
-@@ -88,3 +94,8 @@ rustc-std-workspace-std = { path = 'rustc-std-workspace-std' }
+@@ -88,3 +94,8 @@
  
  # See comments in `library/windows-sys/Cargo.toml` for why this is patched
  windows-sys = { path = 'windows-sys' }
@@ -25,42 +24,41 @@ index 788c990..3f9d4b7 100644
 +kernel-client = { path = "../dependencies/kernel-client" }
 +kernel-api-macros = { path = "../dependencies/kernel-api-macros" }
 diff --git a/library/panic_unwind/Cargo.toml b/library/panic_unwind/Cargo.toml
-index 72c1041..9940a7d 100644
 --- a/library/panic_unwind/Cargo.toml
 +++ b/library/panic_unwind/Cargo.toml
-@@ -16,5 +16,5 @@ alloc = { path = "../alloc" }
+@@ -16,7 +16,7 @@
  core = { path = "../rustc-std-workspace-core", package = "rustc-std-workspace-core" }
  unwind = { path = "../unwind" }
  
 -[target.'cfg(not(all(windows, target_env = "msvc")))'.dependencies]
 +[target.'cfg(all(not(target_os = "vanllia"), not(all(windows, target_env = "msvc"))))'.dependencies]
  libc = { version = "0.2", default-features = false }
+ 
+ [lints.cargo]
 diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
-index 06c57c5..5677c43 100644
 --- a/library/std/Cargo.toml
 +++ b/library/std/Cargo.toml
-@@ -32,7 +32,7 @@ rustc-demangle = { version = "0.1.28", features = ['rustc-dep-of-std'] }
+@@ -32,7 +32,7 @@
  miniz_oxide = { version = "0.9.0", optional = true, default-features = false }
  addr2line = { version = "0.27.0", optional = true, default-features = false }
  
 -[target.'cfg(not(all(windows, target_env = "msvc")))'.dependencies]
 +[target.'cfg(all(not(target_os = "vanllia"), not(all(windows, target_env = "msvc"))))'.dependencies]
- libc = { version = "0.2.189", default-features = false, features = [
+ libc = { version = "0.2.191", default-features = false, features = [
      'rustc-dep-of-std',
  ], public = true }
-@@ -167,3 +167,7 @@ check-cfg = [
-     'cfg(target_has_reliable_f128)',
-     'cfg(target_has_reliable_f128_math)',
- ]
+@@ -171,3 +171,7 @@
+ [lints.cargo]
+ # panic_abort is not directly used but must be linked in
+ unused_dependencies = "allow"
 +
 +[target.'cfg(target_os = "vanllia")'.dependencies]
 +kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
 +kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
 diff --git a/library/std/build.rs b/library/std/build.rs
-index 98856b5..a907a2c 100644
 --- a/library/std/build.rs
 +++ b/library/std/build.rs
-@@ -17,7 +17,8 @@ fn main() {
+@@ -17,7 +17,8 @@
      println!("cargo::rustc-check-cfg=cfg(no_global_oom_handling)");
  
      println!("cargo:rustc-check-cfg=cfg(restricted_std)");
@@ -71,10 +69,9 @@ index 98856b5..a907a2c 100644
          || target_os == "netbsd"
          || target_os == "dragonfly"
 diff --git a/library/std/src/lib.rs b/library/std/src/lib.rs
-index c200743..3d49902 100644
 --- a/library/std/src/lib.rs
 +++ b/library/std/src/lib.rs
-@@ -477,7 +477,7 @@ extern crate alloc as alloc_crate;
+@@ -475,7 +475,7 @@
  // so include it here even if it's unused.
  #[doc(masked)]
  #[allow(unused_extern_crates)]
@@ -84,10 +81,9 @@ index c200743..3d49902 100644
  
  // We always need an unwinder currently for backtraces
 diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
-index 66a2c3b..6de1bd6 100644
 --- a/library/std/src/sys/alloc/mod.rs
 +++ b/library/std/src/sys/alloc/mod.rs
-@@ -64,6 +64,10 @@ unsafe fn realloc_fallback(ptr: *mut u8, old_layout: Layout, new_size: usize) ->
+@@ -64,6 +64,10 @@
  }
  
  cfg_select! {
@@ -100,7 +96,6 @@ index 66a2c3b..6de1bd6 100644
          use unix as imp;
 diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/alloc/vanllia/mod.rs
 new file mode 100644
-index 0000000..c2e0c5b
 --- /dev/null
 +++ b/library/std/src/sys/alloc/vanllia/mod.rs
 @@ -0,0 +1,103 @@
@@ -208,10 +203,9 @@ index 0000000..c2e0c5b
 +    unsafe { super::realloc_fallback(data, layout, size) }
 +}
 diff --git a/library/std/src/sys/env_consts.rs b/library/std/src/sys/env_consts.rs
-index b14160c..4a2feda 100644
 --- a/library/std/src/sys/env_consts.rs
 +++ b/library/std/src/sys/env_consts.rs
-@@ -422,6 +422,17 @@ pub mod os {
+@@ -422,6 +422,17 @@
      pub const EXE_EXTENSION: &str = "elf";
  }
  
@@ -230,10 +224,9 @@ index b14160c..4a2feda 100644
  #[else]
  pub mod os {
 diff --git a/library/std/src/sys/exit.rs b/library/std/src/sys/exit.rs
-index b9ebe2d..8978093 100644
 --- a/library/std/src/sys/exit.rs
 +++ b/library/std/src/sys/exit.rs
-@@ -93,6 +93,7 @@ cfg_select! {
+@@ -93,6 +93,7 @@
  
  pub fn exit(code: i32) -> ! {
      cfg_select! {
@@ -242,10 +235,9 @@ index b9ebe2d..8978093 100644
          target_os = "linux" => unsafe {
              unique_thread_exit();
 diff --git a/library/std/src/sys/io/error/mod.rs b/library/std/src/sys/io/error/mod.rs
-index a56030f..1b83f29 100644
 --- a/library/std/src/sys/io/error/mod.rs
 +++ b/library/std/src/sys/io/error/mod.rs
-@@ -31,7 +31,7 @@ cfg_select! {
+@@ -31,7 +31,7 @@
          mod xous;
          pub use xous::*;
      }
@@ -255,7 +247,6 @@ index a56030f..1b83f29 100644
          pub use generic::*;
      }
 diff --git a/library/std/src/sys/pal/mod.rs b/library/std/src/sys/pal/mod.rs
-index 88d9d42..d595034 100644
 --- a/library/std/src/sys/pal/mod.rs
 +++ b/library/std/src/sys/pal/mod.rs
 @@ -4,6 +4,10 @@
@@ -271,7 +262,6 @@ index 88d9d42..d595034 100644
          pub use self::unix::*;
 diff --git a/library/std/src/sys/pal/vanllia/mod.rs b/library/std/src/sys/pal/vanllia/mod.rs
 new file mode 100644
-index 0000000..19af064
 --- /dev/null
 +++ b/library/std/src/sys/pal/vanllia/mod.rs
 @@ -0,0 +1,61 @@
@@ -337,7 +327,6 @@ index 0000000..19af064
 +    )
 +}
 diff --git a/library/std/src/sys/random/mod.rs b/library/std/src/sys/random/mod.rs
-index bc3dd50..682eac9 100644
 --- a/library/std/src/sys/random/mod.rs
 +++ b/library/std/src/sys/random/mod.rs
 @@ -1,4 +1,7 @@
@@ -349,7 +338,6 @@ index bc3dd50..682eac9 100644
      any(target_os = "linux", target_os = "android") => {
          mod linux;
 diff --git a/library/std/src/sys/stdio/mod.rs b/library/std/src/sys/stdio/mod.rs
-index 86d0f3f..a5fe671 100644
 --- a/library/std/src/sys/stdio/mod.rs
 +++ b/library/std/src/sys/stdio/mod.rs
 @@ -1,6 +1,10 @@
@@ -365,7 +353,6 @@ index 86d0f3f..a5fe671 100644
          pub use unix::*;
 diff --git a/library/std/src/sys/stdio/vanllia/mod.rs b/library/std/src/sys/stdio/vanllia/mod.rs
 new file mode 100644
-index 0000000..f6d1cca
 --- /dev/null
 +++ b/library/std/src/sys/stdio/vanllia/mod.rs
 @@ -0,0 +1,35 @@
@@ -405,30 +392,28 @@ index 0000000..f6d1cca
 +    None
 +}
 diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
-index 809ef5c..53b1e69 100644
 --- a/library/std/src/sys/thread_local/mod.rs
 +++ b/library/std/src/sys/thread_local/mod.rs
 @@ -36,6 +36,7 @@
  cfg_select! {
      any(
-         all(target_family = "wasm", not(target_feature = "atomics"), not(target_env = "p3")),
+         all(target_family = "wasm", not(target_feature = "atomics"), not(target_os = "wasi")),
 +        target_os = "vanllia",
          target_os = "uefi",
          target_os = "zkvm",
          target_os = "trusty",
-@@ -107,6 +108,7 @@ pub(crate) mod guard {
+@@ -115,6 +116,7 @@
          }
          any(
-             all(target_family = "wasm", not(target_env = "p3")),
+             all(target_family = "wasm", not(target_os = "wasi")),
 +            target_os = "vanllia",
              target_os = "uefi",
              target_os = "zkvm",
              target_os = "trusty",
 diff --git a/library/std_detect/Cargo.toml b/library/std_detect/Cargo.toml
-index a6785bb..aa10dfa 100644
 --- a/library/std_detect/Cargo.toml
 +++ b/library/std_detect/Cargo.toml
-@@ -19,7 +19,7 @@ maintenance = { status = "experimental" }
+@@ -19,7 +19,7 @@
  core = { version = "1.0.0", package = 'rustc-std-workspace-core' }
  alloc = { version = "1.0.0", package = 'rustc-std-workspace-alloc' }
  
@@ -438,10 +423,9 @@ index a6785bb..aa10dfa 100644
  
  [features]
 diff --git a/library/unwind/Cargo.toml b/library/unwind/Cargo.toml
-index 628b9d5..22cd20f 100644
 --- a/library/unwind/Cargo.toml
 +++ b/library/unwind/Cargo.toml
-@@ -13,7 +13,7 @@ doc = false
+@@ -13,7 +13,7 @@
  [dependencies]
  core = { path = "../rustc-std-workspace-core", package = "rustc-std-workspace-core" }
  
@@ -451,7 +435,6 @@ index 628b9d5..22cd20f 100644
  
  [target.'cfg(target_os = "xous")'.dependencies]
 diff --git a/library/unwind/src/lib.rs b/library/unwind/src/lib.rs
-index a64049a..50de3f7 100644
 --- a/library/unwind/src/lib.rs
 +++ b/library/unwind/src/lib.rs
 @@ -11,7 +11,7 @@

@@ -8,7 +8,6 @@ pub mod patch;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub toolchain: String,
-    pub commit: String,
     pub host: String,
     pub target: String,
 }
@@ -17,20 +16,16 @@ impl Config {
     pub fn read(root: &Path) -> Result<Self> {
         let config: Self =
             toml::from_str(&std::fs::read_to_string(root.join("rust/source.toml"))?)?;
-        if config.commit.len() != 40 || !config.commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Rust commit must be a full 40-character revision".into());
-        }
-        let date = config.toolchain.strip_prefix("nightly-").unwrap_or("");
-        if date.len() != 10
-            || !date.bytes().enumerate().all(|(i, b)| {
-                if i == 4 || i == 7 {
-                    b == b'-'
-                } else {
-                    b.is_ascii_digit()
-                }
-            })
+        if config.toolchain.is_empty()
+            || !config
+                .toolchain
+                .starts_with(|c: char| c.is_ascii_alphanumeric())
+            || !config
+                .toolchain
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         {
-            return Err("toolchain must be a dated nightly-YYYY-MM-DD".into());
+            return Err("invalid rustup toolchain selector".into());
         }
         if config.host != "x86_64-unknown-linux-gnu" || config.target != "riscv64gc-unknown-vanllia"
         {
@@ -103,13 +98,15 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     let version = capture(config.command("rustc").arg("-Vv"))?;
     if !version
         .lines()
-        .any(|s| s == format!("commit-hash: {}", config.commit))
-        || !version
-            .lines()
-            .any(|s| s == format!("host: {}", config.host))
+        .any(|s| s == format!("host: {}", config.host))
     {
-        return Err("installed rustc does not match rust/source.toml commit/host".into());
+        return Err("installed rustc does not match rust/source.toml host".into());
     }
+    let commit = version
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .ok_or("rustc did not report its commit hash")?
+        .to_owned();
     let sysroot = capture(config.command("rustc").args(["--print", "sysroot"]))?;
     let library = Path::new(&sysroot).join("lib/rustlib/src/rust/library");
     for path in [
@@ -124,7 +121,7 @@ pub fn verify(config: &Config) -> Result<Compiler> {
     }
     Ok(Compiler {
         distribution: config.distribution(),
-        commit: config.commit.clone(),
+        commit,
         version,
         sysroot,
         source: library.to_string_lossy().into_owned(),

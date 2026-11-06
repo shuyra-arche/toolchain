@@ -2,7 +2,7 @@
 
 Rust toolchain support for Vanllia, maintained by Shuyra.
 
-The CLI prepares a pinned Rust compiler/library source pair and builds static
+The CLI prepares the selected Rust compiler/library source pair and builds static
 RV64 programs. It supports the original `no_std` startup probe and an experimental
 single-thread `std` backend with ordinary Rust `main`, normal return, explicit
 exit, panic-abort and a Kernel-backed allocator. The custom
@@ -16,22 +16,26 @@ The initial host is Linux x86_64. Install rustup and Git, with access to the
 Rust distribution server, crates.io and GitHub. Run from this checkout:
 
 ```sh
-rustup toolchain install nightly-2026-09-04 --profile minimal --component rust-src,rustfmt,clippy
-cargo +nightly-2026-09-04 run --locked -- prepare
-cargo +nightly-2026-09-04 run --locked -- build
-cargo +nightly-2026-09-04 run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
+rustup toolchain install nightly --profile minimal --component rust-src,rustfmt,clippy
+cargo +nightly run --locked -- prepare
+cargo +nightly run --locked -- build
+cargo +nightly run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
 ```
 
 `prepare` uses the official rustup distribution's `rust-src`, paired with the
-compiler. `rust/source.toml` pins the date, full upstream commit, host and target;
-`build` verifies the installed compiler's commit/host and required source files.
+compiler. `rust/source.toml` selects the rolling `nightly` channel, host and target;
+no Rust date or commit is fixed. `prepare` updates the selected distribution;
+`build` uses its installed compiler and checks the host and required source files.
+Receipts record the actual compiler commit/version and source hash. Run `prepare`
+again to update nightly. Patch or target incompatibilities fail visibly and require
+adapting this repository; the build does not silently fall back to an older Rust.
 The bootstrap command uses upstream Cargo `-Zbuild-std=core,compiler_builtins`;
 it does not rebuild rustc. No `rust-toolchain.toml` or default
-toolchain change is needed. Both Cargo lockfiles are committed.
+toolchain change is needed. Host and guest Cargo lockfiles are committed.
 
 | Input | Revision |
 | --- | --- |
-| Rust compiler and library source | [`a69a63265cfd9e006d43137f98301b8d274ad4c9`](https://github.com/rust-lang/rust/tree/a69a63265cfd9e006d43137f98301b8d274ad4c9), nightly-2026-09-04 |
+| Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
 | Kernel API/Client | [`17059c2922c1084d3b816f54d02226488ddb8298`](https://github.com/shuyra-arche/kernel/tree/17059c2922c1084d3b816f54d02226488ddb8298) |
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
@@ -52,8 +56,8 @@ invoked elsewhere. Use one build invocation per checkout at a time.
 After `prepare`, run:
 
 ```sh
-cargo +nightly-2026-09-04 run --locked -- prepare-std
-cargo +nightly-2026-09-04 run --locked -- build-std
+cargo +nightly run --locked -- prepare-std
+cargo +nightly run --locked -- build-std
 ```
 
 `prepare-std` copies matching Rust library sources into ignored `work/std-stage/`,
@@ -133,17 +137,17 @@ The fixture does not implement the legacy Env/Execution startup handshake.
 ## Verification
 
 ```sh
-cargo +nightly-2026-09-04 fmt --all -- --check
-cargo +nightly-2026-09-04 fmt --manifest-path tests/target/startup/Cargo.toml -- --check
-cargo +nightly-2026-09-04 fmt --manifest-path tests/target/std/Cargo.toml -- --check
-cargo +nightly-2026-09-04 test --locked --test bootstrap
-cargo +nightly-2026-09-04 clippy --locked --all-targets -- -D warnings
-cargo +nightly-2026-09-04 run --locked -- build
+cargo +nightly fmt --all -- --check
+cargo +nightly fmt --manifest-path tests/target/startup/Cargo.toml -- --check
+cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
+cargo +nightly test --locked --test bootstrap
+cargo +nightly clippy --locked --all-targets -- -D warnings
+cargo +nightly run --locked -- build
 ```
 
 The host suite exercises the CLI's rejection of malformed/unsafe ELF files,
-mutable source pins, and stale success receipts. The independent guest package
-is under `tests/target/startup/`; host tests do not build it automatically.
+unsupported host/target settings, compiler identity recording, and stale success
+receipts. The independent guest package is under `tests/target/startup/`; host tests do not build it automatically.
 
 Host checks and the target build have passed. Vanllia's planner can select the
 minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
@@ -166,7 +170,7 @@ are tracked in [Vanllia #19](https://github.com/shuyra-arche/vanllia/issues/19).
 | `src/build/standard/mod.rs` | Build/inspect std consumers and record their dependency inventory |
 | `src/source/patch/mod.rs` | Prepare and fingerprint the isolated patched source tree |
 | `src/elf/mod.rs` | Inspect the bootstrap executable contract |
-| `rust/` | Pinned Rust inputs and custom target settings |
+| `rust/` | Rust channel, upstream patches and custom target settings |
 | `tests/bootstrap/mod.rs` | Host CLI contract tests |
 | `tests/target/startup/` | Bootstrap fixture, linker script and Unit declaration |
 | `tests/target/std/` | Ordinary main, allocator and termination consumers |

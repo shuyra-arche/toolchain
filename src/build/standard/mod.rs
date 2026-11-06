@@ -98,9 +98,16 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
         return Err("prepared sources changed during compilation".into());
     }
     for (path, hash) in &stage.inputs {
-        if path != "rust-src" && elf::hash(&fs::read(root.join(path))?) != *hash {
+        if path != "rust-src"
+            && path != "compiler"
+            && elf::hash(&fs::read(root.join(path))?) != *hash
+        {
             return Err(format!("prepared source input changed during compilation: {path}").into());
         }
+    }
+    let after = source::verify(config)?;
+    if serde_json::to_vec(&after)? != serde_json::to_vec(&compiler)? {
+        return Err("compiler or rust-src changed during std build".into());
     }
     let receipt = serde_json::json!({"schema": 1, "compiler": compiler, "stage": stage,
         "fixture_sha256": fixture_hash, "target_sha256": target_hash, "artifacts": artifacts, "target_libraries": libraries,
