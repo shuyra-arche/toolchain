@@ -69,8 +69,8 @@ pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler
     for path in [
         root.join("rust/source.toml"),
         root.join("rust/patches/series"),
-        root.join("tests/target/startup/Cargo.toml"),
-        root.join("tests/target/startup/Cargo.lock"),
+        root.join("rust/dependencies.toml"),
+        root.join("rust/dependencies.lock"),
     ]
     .into_iter()
     .chain(patches.iter().cloned())
@@ -140,12 +140,28 @@ pub fn prepare(root: &Path, config: &source::Config, compiler: &source::Compiler
     if source::source_hash(&sources.join("library"))? != compiler.source_sha256 {
         return Err("rust-src changed while preparing its private copy".into());
     }
+    // Cargo resolves source inputs through a generated, never-built package.
+    // Its dependency manifest and lock are checked in; no fixture controls std.
+    let resolver = directory.join("dependencies");
+    fs::create_dir_all(&resolver)?;
+    fs::write(
+        resolver.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"shuyra-std-inputs\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n[lib]\npath = \"lib.rs\"\n{}",
+            fs::read_to_string(root.join("rust/dependencies.toml"))?
+        ),
+    )?;
+    fs::write(resolver.join("lib.rs"), "#![no_std]\n")?;
+    fs::copy(
+        root.join("rust/dependencies.lock"),
+        resolver.join("Cargo.lock"),
+    )?;
     source::capture(
         config
             .command("cargo")
             .current_dir(root)
             .args(["vendor", "--locked", "--manifest-path"])
-            .arg(root.join("tests/target/startup/Cargo.toml"))
+            .arg(resolver.join("Cargo.toml"))
             .arg(sources.join("dependencies")),
     )?;
     source::capture(

@@ -90,9 +90,16 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     if libraries.contains("libc") {
         return Err("unexpected target libc dependency".into());
     }
-    if !["core", "alloc", "std", "kernel_api", "kernel_client"]
-        .iter()
-        .all(|name| libraries.contains(*name))
+    if ![
+        "core",
+        "alloc",
+        "std",
+        "kernel_api",
+        "kernel_client",
+        "talc",
+    ]
+    .iter()
+    .all(|name| libraries.contains(*name))
     {
         return Err("missing expected target library build evidence".into());
     }
