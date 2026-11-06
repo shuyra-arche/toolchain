@@ -4,8 +4,8 @@ Rust toolchain support for Vanllia, maintained by Shuyra.
 
 The CLI prepares the selected Rust compiler/library source pair and builds static
 RV64 programs. It supports the original `no_std` startup probe and an experimental
-single-thread `std` backend with ordinary Rust `main`, normal return, explicit
-exit, panic-abort and a Kernel-backed allocator. The custom
+`std` backend with ordinary Rust `main`, normal return, explicit
+exit, panic-abort, threads, key-based TLS and a Kernel-backed allocator. The custom
 `riscv64gc-unknown-vanllia` target remains experimental; there is no installable
 sysroot or native Vanllia compiler yet. Further work lives in
 [Issue #1](https://github.com/shuyra-arche/toolchain/issues/1).
@@ -76,9 +76,9 @@ source and licensing notices are retained in the generated tree.
 | Boundary | Implemented behavior |
 | --- | --- |
 | Entry | `_start` establishes `gp`, checks stack alignment and invokes rustc's generated `main` entry; Kernel argument words are not miscast as C strings, so `std::env::args()` is empty |
-| Normal return | Upstream `std::rt` initializes the main thread, calls user `main` and `Termination::report`, then runs std cleanup; the backend cleans current-thread state and calls Kernel Client `Reap` |
+| Normal return | Upstream `std::rt` initializes the main thread, calls user `main` and `Termination::report`, then runs std cleanup; the backend runs TLS destructors, stops other std-managed tasks and calls Kernel Client `Reap` |
 | Explicit exit / abort | `process::exit` preserves its code; panic and allocation-error handling abort with the Kernel panic reason, without unwinding |
-| Allocation | Each allocation acquires a source and attaches an aligned RW mapping; metadata retains reference/view ownership; deallocation detaches then releases |
+| Allocation | Each allocation attaches an aligned RW mapping with SpaceMembers control, then releases its temporary task-local source handle; any member can detach the mapping when freeing it |
 | Failure / realloc | Arithmetic/acquire/attach failure returns null; failed attachment releases its source; failed realloc preserves the old allocation; cleanup failure aborts without allocating |
 
 This allocator favors a small ownership implementation over efficiency: even
@@ -86,15 +86,40 @@ small allocations use page-backed mappings and Kernel calls. It supports aligned
 and zeroed allocation, growth and shrinking. Physical page materialization stays
 under Kernel policy.
 
-The target explicitly disables threads. Thread creation is unsupported; direct
-Kernel task creation must not be mixed into a program using this single-thread
-std. User TLS destructors, service-backed console/fs/net/process facilities,
+`std::thread::spawn`, `Builder`, `join`, scoped threads and detached workers use
+Kernel tasks in the same Space. Kernel owns stacks and their reclamation. A
+completion flag is published after the closure and TLS cleanup; `join` acquires
+it before returning. If Kernel terminates a joined worker before cleanup, the
+process aborts instead of waiting forever. Spawn failure releases the closure.
+Normal main return, explicit exit and Rust panic-abort stop the other registered
+std tasks. Raw Kernel-created tasks are outside this registry and must not be
+mixed with these process-lifecycle assumptions. They also lack this TLS bootstrap
+and cannot directly enter this std backend.
+
+`thread_local!` uses upstream key-based storage with a per-task table addressed
+by RISC-V `tp`; it does not require ELF TLS segments. Tables are installed before
+std initialization on the initial task and every spawned task. Values are
+isolated, destructors run before current-thread cleanup, and `join` waits for
+this cleanup. Destructors may initialize other keys; resurrection is limited to
+four passes, after which remaining values may leak, as with bounded key-based
+TLS destruction. Main-thread TLS is also cleaned on normal runtime exit.
+
+Mutex, Condvar, RwLock, Once and park/unpark use upstream atomic algorithms with
+a cooperative polling backend. Waiters recheck state after yielding; this is
+correctness-first and does not provide efficient blocked futex waits or fairness
+guarantees. `Instant`, sleep and timed waits use Kernel's monotonic clock.
+`available_parallelism` reports unavailable rather than inventing a CPU count.
+The task registry is bounded at 1024 entries, including the initial task.
+
+Service-backed console/fs/net/process facilities, wall-clock SystemTime,
 unwinding and service argument translation are not implemented. Console reads
 and writes return Unsupported, and unavailable random generation fails explicitly.
 Debug output is not substituted for stdout. Static objects are not automatically
-dropped at exit; normal Rust local drops are provided by Rust itself.
+dropped at exit. Panic-abort and termination of other tasks do not run their TLS
+destructors; automatic process-wide handling of a detached task's Kernel fault
+is not implemented.
 
-`build/std.json` records the prepared source/patch/dependency fingerprints, four
+`build/std.json` records the prepared source/patch/dependency fingerprints, guest
 ELF hashes and the target library inventory; the command rejects a target `libc`
 dependency. It always records `guest_execution: not_run`, because building does
 not execute the programs. Outputs are under
@@ -105,6 +130,13 @@ not execute the programs. Outputs are under
 - `std-exit`: explicit exit code 23.
 - `std-panic`: panic-abort.
 - `std-oom`: allocation-error-handler abort.
+- `std-threads`: concurrent TLS isolation/destructors, cross-thread ownership,
+  nested creators, scoped/detached threads, lock/once contention, timed waits,
+  spawn failure, and main return with a live detached worker.
+- `std-thread-exit`, `std-thread-panic`: process termination from a worker.
+- `std-tls-main`: main TLS destructor execution, observed through intentional abort.
+- `std-thread-fault`: a Kernel illegal-instruction fault must abort join rather
+  than hang or return normally.
 
 Vanllia owns the opt-in `tests/toolchain/` QEMU scenario. It consumes these actual
 ELFs and their hashes, reuses its capsule encoder and timeout runner, and checks
@@ -153,7 +185,8 @@ Host checks and the target build have passed. Vanllia's planner can select the
 minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
 Assembled execution still needs a compatible Toolchain artifact handoff in
 Vanllia, with observed task termination and bounded failure/timeout handling.
-The four std fixtures have passed direct-Kernel QEMU execution. System-mediated
+The std fixtures are verified through direct-Kernel QEMU execution on one and
+two harts. System-mediated
 execution and hardware remain unverified. Toolchain CI checks host behavior and
 target compilation; Vanllia owns the explicit QEMU scenario.
 
@@ -173,7 +206,7 @@ are tracked in [Vanllia #19](https://github.com/shuyra-arche/vanllia/issues/19).
 | `rust/` | Rust channel, upstream patches and custom target settings |
 | `tests/bootstrap/mod.rs` | Host CLI contract tests |
 | `tests/target/startup/` | Bootstrap fixture, linker script and Unit declaration |
-| `tests/target/std/` | Ordinary main, allocator and termination consumers |
+| `tests/target/std/` | Main, allocation, thread/TLS and termination consumers |
 
 Generated `build/`, `target/`, `work/` and `dist/` paths are ignored. Upstream
 source edits are maintained only as patches; installation remains separate work. Modules with children

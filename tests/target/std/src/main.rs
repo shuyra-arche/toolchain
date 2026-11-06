@@ -73,7 +73,7 @@ fn main() -> Completed {
             System.dealloc(p, layout);
         }
     }
-    assert!(std::thread::Builder::new().spawn(|| ()).is_err());
+    assert_eq!(std::thread::spawn(|| 42).join().unwrap(), 42);
     assert_eq!(
         std::io::stdout()
             .write(b"unsupported\n")

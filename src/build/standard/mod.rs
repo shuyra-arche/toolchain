@@ -24,7 +24,17 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     let target_hash = elf::hash(&fs::read(&target)?);
     let mut artifacts = BTreeMap::new();
     let mut libraries = BTreeSet::new();
-    for name in ["toolchain-std", "std-panic", "std-exit", "std-oom"] {
+    for name in [
+        "toolchain-std",
+        "std-panic",
+        "std-exit",
+        "std-oom",
+        "std-threads",
+        "std-thread-exit",
+        "std-thread-panic",
+        "std-tls-main",
+        "std-thread-fault",
+    ] {
         let mut command = stage.cargo(&compiler);
         command
             .current_dir(root)

@@ -1,0 +1,663 @@
+diff --git a/library/std/src/sys/alloc/vanllia/mod.rs b/library/std/src/sys/alloc/vanllia/mod.rs
+--- a/library/std/src/sys/alloc/vanllia/mod.rs
++++ b/library/std/src/sys/alloc/vanllia/mod.rs
+@@ -1,19 +1,19 @@
+ //! Page-backed first allocator: no fixed heap, allocator locks or service calls.
+ //! Each allocation retains its source and mapping until deallocation. This is
+-//! deliberately a single-thread implementation with task-owned Kernel handles.
++//! usable across tasks: SpaceMembers controls the mapping, and temporary
++//! task-local acquisition handles are released before returning the allocation.
+ use crate::{alloc::Layout, ptr};
+ use kernel_api::model::{
+     identity::{PieToken, TeamId, VirtAddr},
+     memory::{
+-        AcquireSource, Allocation, FlatReference, PAGE_SIZE, Placement, ReferenceRange,
+-        ViewControl, ViewId, ViewSelection,
++        AcquireSource, Allocation, PAGE_SIZE, Placement, ReferenceRange, ViewControl, ViewId,
++        ViewSelection,
+     },
+ };
+ use kernel_client::call::memory;
+ 
+ #[derive(Clone, Copy)]
+ struct Header {
+-    reference: FlatReference,
+     view: ViewId,
+ }
+ 
+@@ -59,7 +59,7 @@
+         TeamId::new(0),
+         VirtAddr::new(placement.as_ptr() as usize),
+         6,
+-        ViewControl::Caller,
++        ViewControl::SpaceMembers,
+     );
+     let (view, address) = match attached {
+         Ok(value) => value,
+@@ -70,11 +70,14 @@
+             return ptr::null_mut();
+         }
+     };
++    if memory::release(reference).is_err() {
++        cleanup_failure()
++    }
+     let data = unsafe { (address.get() as *mut u8).add(prefix) };
+     unsafe {
+         data.sub(size_of::<Header>())
+             .cast::<Header>()
+-            .write(Header { reference, view });
++            .write(Header { view });
+     }
+     data
+ }
+@@ -83,9 +86,6 @@
+     let header = unsafe { data.sub(size_of::<Header>()).cast::<Header>().read() };
+     // Copy metadata first: Detach makes the header itself inaccessible.
+     if memory::detach(TeamId::new(0), header.view, ViewSelection::Whole).is_err() {
+-        cleanup_failure()
+-    }
+-    if memory::release(header.reference).is_err() {
+         cleanup_failure()
+     }
+ }
+diff --git a/library/std/src/sys/pal/vanllia/mod.rs b/library/std/src/sys/pal/vanllia/mod.rs
+--- a/library/std/src/sys/pal/vanllia/mod.rs
++++ b/library/std/src/sys/pal/vanllia/mod.rs
+@@ -1,4 +1,5 @@
+-//! Experimental single-thread Vanllia process entry and termination.
++//! Vanllia process entry and termination.
++pub(crate) mod tls;
+ use kernel_api::model::{exit::EXIT_PANIC, identity::VirtAddr};
+ 
+ pub fn unsupported<T>() -> crate::io::Result<T> {
+@@ -20,10 +21,7 @@
+     ".option pop",
+     "andi t0, sp, 15",
+     "bnez t0, __shuyra_bad_entry",
+-    "li a0, 0",
+-    "li a1, 0",
+-    "call main",
+-    "tail __shuyra_exit",
++    "tail __shuyra_start",
+ );
+ 
+ #[unsafe(no_mangle)]
+@@ -32,19 +30,31 @@
+ }
+ 
+ #[unsafe(no_mangle)]
+-extern "C" fn __shuyra_exit(code: i32) -> ! {
++extern "C" fn __shuyra_start() -> ! {
++    let state = tls::State::new();
++    unsafe {
++        state.install();
++    }
++    crate::sys::thread::register_main();
++    unsafe extern "C" {
++        fn main(argc: isize, argv: *const *const u8) -> i32;
++    }
++    let code = unsafe { main(0, core::ptr::null()) };
+     terminate(code, "toolchain: std main returned")
+ }
+ 
+ pub unsafe fn init(_argc: isize, _argv: *const *const u8, _sigpipe: u8) {}
+ pub unsafe fn cleanup() {
+-    crate::rt::thread_cleanup();
++    unsafe {
++        tls::cleanup();
++    }
+ }
+ 
+ pub fn finish(code: i32) -> ! {
+     terminate(code, "toolchain: std process exit")
+ }
+ fn terminate(code: i32, note: &str) -> ! {
++    crate::sys::thread::stop_other_threads();
+     kernel_client::call::room::reap(
+         code as u32 as usize,
+         VirtAddr::new(note.as_ptr() as usize),
+@@ -52,6 +62,7 @@
+     )
+ }
+ pub fn abort_internal() -> ! {
++    crate::sys::thread::stop_other_threads();
+     let note = "toolchain: std abort";
+     kernel_client::call::room::reap(
+         EXIT_PANIC,
+diff --git a/library/std/src/sys/pal/vanllia/tls/mod.rs b/library/std/src/sys/pal/vanllia/tls/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/library/std/src/sys/pal/vanllia/tls/mod.rs
+@@ -0,0 +1,109 @@
++//! Key-based TLS with one stack-owned table per Kernel task, addressed by tp.
++use crate::{alloc::System, boxed::Box, cell::Cell, ptr};
++pub type Key = usize;
++pub struct LazyKey {
++    dtor: Option<unsafe extern "C" fn(*mut u8)>,
++}
++impl LazyKey {
++    pub const fn new(dtor: Option<unsafe extern "C" fn(*mut u8)>) -> Self {
++        Self { dtor }
++    }
++    pub fn force(&'static self) -> Key {
++        self as *const Self as usize
++    }
++}
++struct Entry {
++    key: Key,
++    value: Cell<*mut u8>,
++    next: *mut Entry,
++}
++pub struct State {
++    head: Cell<*mut Entry>,
++}
++impl State {
++    pub const fn new() -> Self {
++        Self {
++            head: Cell::new(ptr::null_mut()),
++        }
++    }
++    // State must stay at this address until the task stops; never expose it to
++    // another task. System allocation does not access TLS or user allocators.
++    pub unsafe fn install(&self) {
++        unsafe {
++            core::arch::asm!("mv tp, {}", in(reg) self, options(nostack));
++        }
++    }
++}
++fn state() -> &'static State {
++    let address: *const State;
++    unsafe {
++        core::arch::asm!("mv {}, tp", out(reg) address, options(nomem, nostack));
++        &*address
++    }
++}
++pub unsafe fn get(key: Key) -> *mut u8 {
++    let mut entry = state().head.get();
++    while !entry.is_null() {
++        let item = unsafe { &*entry };
++        if item.key == key {
++            return item.value.get();
++        }
++        entry = item.next;
++    }
++    ptr::null_mut()
++}
++pub unsafe fn set(key: Key, value: *mut u8) {
++    let mut entry = state().head.get();
++    while !entry.is_null() {
++        let item = unsafe { &*entry };
++        if item.key == key {
++            item.value.set(value);
++            return;
++        }
++        entry = item.next;
++    }
++    if value.is_null() {
++        return;
++    }
++    let item = Box::new_in(
++        Entry {
++            key,
++            value: Cell::new(value),
++            next: state().head.get(),
++        },
++        System,
++    );
++    state().head.set(Box::into_raw_with_allocator(item).0);
++}
++pub unsafe fn cleanup() {
++    // Reentrant initialization may add keys. Restart from the head each round.
++    // Like key-based system TLS implementations, bound destructor resurrection.
++    for _ in 0..4 {
++        let mut ran = false;
++        let mut entry = state().head.get();
++        while !entry.is_null() {
++            let item = unsafe { &*entry };
++            let key = unsafe { &*(item.key as *const LazyKey) };
++            if let Some(dtor) = key.dtor {
++                let value = item.value.replace(ptr::null_mut());
++                if !value.is_null() {
++                    ran = true;
++                    unsafe {
++                        dtor(value);
++                    }
++                }
++            }
++            entry = item.next;
++        }
++        if !ran {
++            break;
++        }
++    }
++    crate::rt::thread_cleanup();
++    let mut entry = state().head.replace(ptr::null_mut());
++    while !entry.is_null() {
++        let item = unsafe { Box::from_raw_in(entry, System) };
++        entry = item.next;
++        drop(item);
++    }
++}
+diff --git a/library/std/src/sys/sync/condvar/mod.rs b/library/std/src/sys/sync/condvar/mod.rs
+--- a/library/std/src/sys/sync/condvar/mod.rs
++++ b/library/std/src/sys/sync/condvar/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/futex/mod.rs b/library/std/src/sys/sync/futex/mod.rs
+--- a/library/std/src/sys/sync/futex/mod.rs
++++ b/library/std/src/sys/sync/futex/mod.rs
+@@ -1,4 +1,8 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        pub use vanllia::*;
++    }
+     any(
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/futex/vanllia/mod.rs b/library/std/src/sys/sync/futex/vanllia/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/library/std/src/sys/sync/futex/vanllia/mod.rs
+@@ -0,0 +1,24 @@
++//! Cooperative polling until Kernel provides atomic compare-and-park.
++//! Every wait rechecks the atomic after yielding; no notification can be lost.
++use crate::sync::atomic::{AtomicU32, Ordering};
++use crate::time::{Duration, Instant};
++pub type Futex = AtomicU32;
++pub type Primitive = u32;
++pub type SmallFutex = AtomicU32;
++pub type SmallPrimitive = u32;
++pub fn futex_wait(word: &Futex, expected: u32, timeout: Option<Duration>) -> bool {
++    let start = Instant::now();
++    while word.load(Ordering::Relaxed) == expected {
++        if timeout.is_some_and(|duration| start.elapsed() >= duration) {
++            return false;
++        }
++        kernel_client::call::room::starve();
++    }
++    true
++}
++// Waiters remain runnable and observe the value directly. Report a possible
++// waiter so upstream RwLock does not skip its writer handoff/fallback logic.
++pub fn futex_wake(_: &Futex) -> bool {
++    true
++}
++pub fn futex_wake_all(_: &Futex) {}
+diff --git a/library/std/src/sys/sync/mutex/mod.rs b/library/std/src/sys/sync/mutex/mod.rs
+--- a/library/std/src/sys/sync/mutex/mod.rs
++++ b/library/std/src/sys/sync/mutex/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+diff --git a/library/std/src/sys/sync/once/mod.rs b/library/std/src/sys/sync/once/mod.rs
+--- a/library/std/src/sys/sync/once/mod.rs
++++ b/library/std/src/sys/sync/once/mod.rs
+@@ -9,6 +9,7 @@
+ 
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -25,6 +26,7 @@
+         pub use futex::{Once, OnceState};
+     }
+     any(
++        target_os = "vanllia",
+         windows,
+         target_family = "unix",
+         all(target_vendor = "fortanix", target_env = "sgx"),
+diff --git a/library/std/src/sys/sync/rwlock/mod.rs b/library/std/src/sys/sync/rwlock/mod.rs
+--- a/library/std/src/sys/sync/rwlock/mod.rs
++++ b/library/std/src/sys/sync/rwlock/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -16,6 +17,7 @@
+         pub use futex::RwLock;
+     }
+     any(
++        target_os = "vanllia",
+         target_family = "unix",
+         all(target_os = "windows", target_vendor = "win7"),
+         all(target_vendor = "fortanix", target_env = "sgx"),
+diff --git a/library/std/src/sys/sync/thread_parking/mod.rs b/library/std/src/sys/sync/thread_parking/mod.rs
+--- a/library/std/src/sys/sync/thread_parking/mod.rs
++++ b/library/std/src/sys/sync/thread_parking/mod.rs
+@@ -1,5 +1,6 @@
+ cfg_select! {
+     any(
++        target_os = "vanllia",
+         all(target_os = "windows", not(target_vendor = "win7")),
+         target_os = "linux",
+         target_os = "android",
+@@ -16,6 +17,7 @@
+         pub use futex::Parker;
+     }
+     any(
++        target_os = "vanllia",
+         target_os = "netbsd",
+         all(target_vendor = "fortanix", target_env = "sgx"),
+         target_os = "solid_asp3",
+diff --git a/library/std/src/sys/thread/mod.rs b/library/std/src/sys/thread/mod.rs
+--- a/library/std/src/sys/thread/mod.rs
++++ b/library/std/src/sys/thread/mod.rs
+@@ -1,4 +1,8 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        pub use vanllia::*;
++    }
+     target_os = "hermit" => {
+         mod hermit;
+         pub use hermit::{DEFAULT_MIN_STACK_SIZE, Thread, available_parallelism, sleep, yield_now};
+diff --git a/library/std/src/sys/thread/vanllia/mod.rs b/library/std/src/sys/thread/vanllia/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/library/std/src/sys/thread/vanllia/mod.rs
+@@ -0,0 +1,210 @@
++use crate::sync::atomic::{
++    AtomicBool, AtomicUsize,
++    Ordering::{AcqRel, Acquire, Relaxed, Release},
++};
++use crate::{
++    boxed::Box, ffi::CStr, io, num::NonZero, sync::Arc, thread::ThreadInit, time::Duration,
++};
++use kernel_api::model::{
++    identity::{TaskId, TeamId, VirtAddr},
++    unit::{JoinReply, UnitTarget},
++    wait::Wait,
++};
++use kernel_client::call::{room, unit};
++
++pub const DEFAULT_MIN_STACK_SIZE: usize = 256 * 1024;
++// Kernel currently admits at most 1024 members. Include the initial task.
++static TASKS: [AtomicUsize; 1024] = [const { AtomicUsize::new(0) }; 1024];
++static REGISTRY: AtomicBool = AtomicBool::new(false);
++static EXITING: AtomicUsize = AtomicUsize::new(0);
++struct Registry;
++impl Registry {
++    fn lock() -> Self {
++        while REGISTRY
++            .compare_exchange(false, true, Acquire, Relaxed)
++            .is_err()
++        {
++            yield_now();
++        }
++        Self
++    }
++}
++impl Drop for Registry {
++    fn drop(&mut self) {
++        REGISTRY.store(false, Release);
++    }
++}
++pub fn register_main() {
++    TASKS[0].store(unit::self_id().get(), Release);
++}
++pub struct Thread {
++    id: TaskId,
++    done: Arc<AtomicBool>,
++}
++struct Start {
++    init: Box<ThreadInit>,
++    done: Arc<AtomicBool>,
++}
++impl Thread {
++    pub unsafe fn new(stack: usize, init: Box<ThreadInit>) -> io::Result<Self> {
++        let stack = stack
++            .max(16384)
++            .checked_next_multiple_of(4096)
++            .filter(|size| *size <= isize::MAX as usize)
++            .ok_or(io::const_error!(
++                io::ErrorKind::InvalidInput,
++                "invalid thread stack size"
++            ))?;
++        let done = Arc::new(AtomicBool::new(false));
++        let start = Box::into_raw(Box::new(Start {
++            init,
++            done: done.clone(),
++        }));
++        let result = (|| {
++            let _guard = Registry::lock();
++            if EXITING.load(Acquire) != 0 {
++                return Err(io::const_error!(
++                    io::ErrorKind::Other,
++                    "Kernel thread operation failed"
++                ));
++            }
++            let slot = TASKS
++                .iter()
++                .skip(1)
++                .find(|slot| slot.load(Relaxed) == 0)
++                .ok_or(io::const_error!(
++                    io::ErrorKind::OutOfMemory,
++                    "thread registry full"
++                ))?;
++            let args = [start as usize];
++            let id = unit::spawn(
++                TeamId::new(0),
++                __shuyra_thread_entry as *const () as usize,
++                VirtAddr::new(args.as_ptr() as usize),
++                1,
++                stack,
++            )
++            .map_err(|_| {
++                io::const_error!(io::ErrorKind::Other, "Kernel thread operation failed")
++            })?;
++            slot.store(id.get(), Release);
++            if unit::embark(UnitTarget::Task(id)).is_err() {
++                let _ = unit::slay(UnitTarget::Task(id));
++                slot.store(0, Release);
++                return Err(io::const_error!(
++                    io::ErrorKind::Other,
++                    "Kernel thread operation failed"
++                ));
++            }
++            Ok(Self { id, done })
++        })();
++        if result.is_err() {
++            unsafe {
++                drop(Box::from_raw(start));
++            }
++        }
++        result
++    }
++    pub fn join(self) {
++        while !self.done.load(Acquire) {
++            // A Kernel fault can terminate a task before Rust cleanup runs.
++            // Never wait forever for a completion flag it can no longer set.
++            if !matches!(
++                unit::join(UnitTarget::Task(self.id), Wait::POLL, false),
++                Ok(JoinReply::Pending)
++            ) && !self.done.load(Acquire)
++            {
++                crate::sys::abort_internal();
++            }
++            yield_now();
++        }
++    }
++}
++core::arch::global_asm!(
++    ".text",
++    ".global __shuyra_thread_entry",
++    "__shuyra_thread_entry:",
++    ".option push",
++    ".option norelax",
++    "la gp, __global_pointer$",
++    ".option pop",
++    "tail __shuyra_thread_start",
++);
++unsafe extern "C" {
++    fn __shuyra_thread_entry();
++}
++#[unsafe(no_mangle)]
++unsafe extern "C" fn __shuyra_thread_start(args: *const usize, count: usize) -> ! {
++    let tls = crate::sys::pal::tls::State::new();
++    unsafe {
++        tls.install();
++    }
++    if count != 1 {
++        crate::sys::abort_internal();
++    }
++    let Start { init, done } = unsafe { *Box::from_raw((*args) as *mut Start) };
++    let start = init.init();
++    start();
++    unsafe {
++        crate::sys::pal::tls::cleanup();
++    }
++    // All user code, closure storage and TLS destructors have finished. Publish
++    // with release; join acquires it before reading the upstream result packet.
++    done.store(true, Release);
++    drop(done);
++    let id = unit::self_id().get();
++    {
++        let _guard = Registry::lock();
++        if let Some(slot) = TASKS.iter().find(|slot| slot.load(Relaxed) == id) {
++            slot.store(0, Release);
++        }
++    }
++    room::reap(0, VirtAddr::new(0), 0)
++}
++
++// Serialize against publication, stop every other std-managed task, and wait
++// until it can no longer execute. No allocation, std lock, or TLS is used here.
++pub fn stop_other_threads() {
++    let me = unit::self_id().get();
++    if EXITING.compare_exchange(0, me, AcqRel, Acquire).is_err() {
++        loop {
++            yield_now();
++        }
++    }
++    let _guard = Registry::lock();
++    for slot in &TASKS {
++        let id = slot.load(Acquire);
++        if id == 0 || id == me {
++            continue;
++        }
++        let target = UnitTarget::Task(TaskId::new(id));
++        let _ = unit::slay(target);
++        while matches!(
++            unit::join(target, Wait::POLL, false),
++            Ok(JoinReply::Pending)
++        ) {
++            yield_now();
++        }
++    }
++}
++pub fn available_parallelism() -> io::Result<NonZero<usize>> {
++    Err(io::Error::UNKNOWN_THREAD_COUNT)
++}
++pub fn current_os_id() -> Option<u64> {
++    Some(unit::self_id().get() as u64)
++}
++pub fn set_name(_: &CStr) {}
++pub fn yield_now() {
++    room::starve();
++}
++pub fn sleep(duration: Duration) {
++    let start = crate::time::Instant::now();
++    while start.elapsed() < duration {
++        let remaining = duration.saturating_sub(start.elapsed());
++        let nanos = u64::try_from(remaining.as_nanos()).unwrap_or(u64::MAX);
++        let deadline = kernel_client::call::chrono::clock().saturating_add(nanos);
++        if room::park_until(deadline).is_err() {
++            yield_now();
++        }
++    }
++}
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -36,7 +36,6 @@
+ cfg_select! {
+     any(
+         all(target_family = "wasm", not(target_feature = "atomics"), not(target_os = "wasi")),
+-        target_os = "vanllia",
+         target_os = "uefi",
+         target_os = "zkvm",
+         target_os = "trusty",
+@@ -116,7 +115,6 @@
+         }
+         any(
+             all(target_family = "wasm", not(target_os = "wasi")),
+-            target_os = "vanllia",
+             target_os = "uefi",
+             target_os = "zkvm",
+             target_os = "trusty",
+@@ -136,7 +134,7 @@
+                 use crate::rt::thread_cleanup;
+             }
+         }
+-        any(target_os = "hermit", target_os = "xous") => {
++        any(target_os = "vanllia", target_os = "hermit", target_os = "xous") => {
+             // `std` is the only runtime, so it just calls the destructor functions
+             // itself when the time comes.
+             pub(crate) fn enable() {}
+@@ -166,6 +164,9 @@
+ /// with a pointer which we can get and set to store our data.
+ pub(crate) mod key {
+     cfg_select! {
++        target_os = "vanllia" => {
++            pub(super) use crate::sys::pal::tls::{Key, LazyKey, get, set};
++        }
+         any(
+             all(not(target_vendor = "apple"), not(target_family = "wasm"), target_family = "unix"),
+             all(not(target_thread_local), target_vendor = "apple"),
+diff --git a/library/std/src/sys/time/mod.rs b/library/std/src/sys/time/mod.rs
+--- a/library/std/src/sys/time/mod.rs
++++ b/library/std/src/sys/time/mod.rs
+@@ -1,4 +1,13 @@
+ cfg_select! {
++    target_os = "vanllia" => {
++        mod vanllia;
++        #[expect(unused)]
++        mod unsupported;
++        mod imp {
++            pub use super::unsupported::{SystemTime, UNIX_EPOCH};
++            pub use super::vanllia::Instant;
++        }
++    }
+     target_os = "motor" => {
+         use moto_rt::time as imp;
+     }
+diff --git a/library/std/src/sys/time/vanllia/mod.rs b/library/std/src/sys/time/vanllia/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/library/std/src/sys/time/vanllia/mod.rs
+@@ -0,0 +1,20 @@
++use crate::time::Duration;
++#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
++pub struct Instant(Duration);
++impl Instant {
++    pub fn now() -> Instant {
++        Instant(Duration::from_nanos(kernel_client::call::chrono::clock()))
++    }
++
++    pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {
++        self.0.checked_sub(other.0)
++    }
++
++    pub fn checked_add_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_add(*other)?))
++    }
++
++    pub fn checked_sub_duration(&self, other: &Duration) -> Option<Instant> {
++        Some(Instant(self.0.checked_sub(*other)?))
++    }
++}
