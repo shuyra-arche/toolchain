@@ -1,0 +1,21 @@
+[package]
+name = "toolchain-startup"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autotests = false
+
+[workspace]
+
+[[bin]]
+name = "toolchain-startup"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "17059c2922c1084d3b816f54d02226488ddb8298" }
+
+[profile.release]
+panic = "abort"

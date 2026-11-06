@@ -1,0 +1,9 @@
+schema = 1
+id = "toolchain.startup"
+
+[loader]
+image = "toolchain-startup"
+
+[control]
+creation = "startup"
+ending = "transient"

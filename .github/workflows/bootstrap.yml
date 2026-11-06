@@ -1,0 +1,32 @@
+name: Bootstrap
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-and-target:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned compiler and sources
+        run: rustup toolchain install nightly-2026-09-04 --profile minimal --component rust-src,rustfmt,clippy --no-self-update
+      - name: Check formatting
+        run: |
+          cargo +nightly-2026-09-04 fmt --all -- --check
+          cargo +nightly-2026-09-04 fmt --manifest-path tests/target/startup/Cargo.toml -- --check
+      - name: Check host contracts
+        run: |
+          cargo +nightly-2026-09-04 test --locked --test bootstrap
+          cargo +nightly-2026-09-04 clippy --locked --all-targets -- -D warnings
+      - name: Prepare and build target fixture
+        run: |
+          cargo +nightly-2026-09-04 run --locked -- prepare
+          cargo +nightly-2026-09-04 run --locked -- build
+          cargo +nightly-2026-09-04 run --locked -- inspect build/cargo/riscv64gc-unknown-vanllia/release/toolchain-startup
+          cat build/bootstrap.json
