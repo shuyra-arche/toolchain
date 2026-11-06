@@ -13,7 +13,7 @@ SHA-256. The test is opt-in; it never downloads or substitutes these inputs.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/kernel/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=17059c2922c1084d3b816f54d02226488ddb8298 \
+SHUYRA_KERNEL_REVISION=65e89e1fd52e7fdf14e8ddcb65e75219a5684144 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu -- --ignored --nocapture
@@ -31,6 +31,7 @@ application marker alone does not pass. The expected records are:
 | `std-panic` | `0xffffff01` | `toolchain: std abort` |
 | `std-oom` | `0xffffff01` | `toolchain: std abort` |
 | `std-threads` | `0` | `toolchain: std main returned` |
+| `std-waits` | `0` | `toolchain: std main returned` |
 | `std-thread-exit` | `23` | `toolchain: std process exit` (task 2) |
 | `std-thread-panic` | `0xffffff01` | `toolchain: std abort` (task 2) |
 | `std-tls-main` | `0xffffff01` | `toolchain: std abort` |
@@ -52,7 +53,10 @@ ownership, concurrent allocation/free, join/scoped/detached workers,
 synchronization and timeouts. Process-exit
 probes require all tasks to halt, including a live detached worker on main return
 and the initial task on worker exit/panic. An illegal-instruction worker checks
-that join aborts when Kernel ends a task before Rust cleanup. These are 18 QEMU
+that join aborts when Kernel ends a task before Rust cleanup. The wait fixture checks Kernel queue counts, comparison mismatch, poll and timed
+expiry, invalid addresses, event-key separation, wake-one/broadcast, finite-timeout
+overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
+termination of a blocked detached worker. These are 20 QEMU
 runs in one opt-in test, not host emulation of the Kernel boundary.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and

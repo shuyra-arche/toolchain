@@ -53,6 +53,7 @@ fn std_main_allocator_and_termination() {
             ("std-panic", 1, "0xffffff01", "toolchain: std abort"),
             ("std-oom", 1, "0xffffff01", "toolchain: std abort"),
             ("std-threads", 1, "0x0", "toolchain: std main returned"),
+            ("std-waits", 1, "0x0", "toolchain: std main returned"),
             ("std-thread-exit", 2, "0x17", "toolchain: std process exit"),
             ("std-thread-panic", 2, "0xffffff01", "toolchain: std abort"),
             ("std-tls-main", 1, "0xffffff01", "toolchain: std abort"),

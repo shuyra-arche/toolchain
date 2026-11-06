@@ -34,6 +34,7 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
         "std-thread-panic",
         "std-tls-main",
         "std-thread-fault",
+        "std-waits",
     ] {
         let mut command = stage.cargo(&compiler);
         command

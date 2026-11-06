@@ -60,3 +60,13 @@ name = "std-thread-fault"
 path = "src/thread-fault/main.rs"
 test = false
 bench = false
+
+[dependencies]
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "65e89e1fd52e7fdf14e8ddcb65e75219a5684144" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "65e89e1fd52e7fdf14e8ddcb65e75219a5684144" }
+
+[[bin]]
+name = "std-waits"
+path = "src/waits/main.rs"
+test = false
+bench = false
