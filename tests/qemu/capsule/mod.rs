@@ -1,6 +1,18 @@
 //! Encode only the ELF subset already accepted by the Toolchain inspect CLI.
 //! Kernel's public parser validates the resulting wire format before boot.
-use kernel_api::boot::capsule::{Capsule, HEADER, MAGIC, PAGE, RECORD};
+use kernel_api_v6::boot::capsule::{HEADER, MAGIC, PAGE, RECORD};
+
+#[derive(Clone, Copy)]
+pub enum Format {
+    Legacy,
+    V6,
+}
+
+// These capsule generations use the same region and payload layout.
+const _: () = {
+    use kernel_api::boot::capsule as legacy;
+    assert!(HEADER == legacy::HEADER && PAGE == legacy::PAGE && RECORD == legacy::RECORD);
+};
 
 fn number(bytes: &[u8], at: usize, width: usize) -> usize {
     let mut raw = [0; 8];
@@ -8,7 +20,7 @@ fn number(bytes: &[u8], at: usize, width: usize) -> usize {
     usize::try_from(u64::from_le_bytes(raw)).unwrap()
 }
 
-pub fn encode(elf: &[u8]) -> Vec<u8> {
+pub fn initrd(elf: &[u8], format: Format) -> Vec<u8> {
     let table = number(elf, 32, 8);
     let segments: Vec<_> = (0..number(elf, 56, 2))
         .map(|i| table.checked_add(i.checked_mul(56).unwrap()).unwrap())
@@ -16,8 +28,16 @@ pub fn encode(elf: &[u8]) -> Vec<u8> {
         .collect();
     let mut out = vec![0; (HEADER + segments.len() * RECORD).next_multiple_of(PAGE)];
     out[..8].copy_from_slice(&MAGIC);
-    out[8..10].copy_from_slice(&1u16.to_le_bytes());
+    let (version, abi) = match format {
+        Format::Legacy => (1u16, 0),
+        Format::V6 => (
+            kernel_api_v6::boot::capsule::VERSION,
+            u8::try_from(kernel_api_v6::abi::VERSION).unwrap(),
+        ),
+    };
+    out[8..10].copy_from_slice(&version.to_le_bytes());
     out[10] = PAGE.trailing_zeros() as u8;
+    out[11] = abi;
     out[12..16].copy_from_slice(&u32::try_from(segments.len()).unwrap().to_le_bytes());
     out[16..24].copy_from_slice(&elf[24..32]);
     for (index, at) in segments.into_iter().enumerate() {
@@ -74,9 +94,16 @@ pub fn encode(elf: &[u8]) -> Vec<u8> {
     }
     let length = out.len() as u64;
     out[24..32].copy_from_slice(&length.to_le_bytes());
-    assert!(
-        Capsule::parse(&out).is_some(),
-        "Kernel rejected encoded capsule"
-    );
-    out
+    let mut initrd = vec![0; PAGE];
+    initrd[..4].copy_from_slice(&u32::try_from(PAGE).unwrap().to_le_bytes());
+    initrd[4..8].copy_from_slice(&u32::try_from(out.len()).unwrap().to_le_bytes());
+    initrd.extend_from_slice(&out);
+    let valid = match format {
+        Format::Legacy => kernel_api::boot::capsule::Capsule::parse(&initrd[PAGE..]).is_some(),
+        Format::V6 => kernel_api_v6::boot::initrd::entry_image(&initrd)
+            .and_then(kernel_api_v6::boot::capsule::Capsule::parse)
+            .is_some(),
+    };
+    assert!(valid, "Kernel rejected encoded capsule");
+    initrd
 }

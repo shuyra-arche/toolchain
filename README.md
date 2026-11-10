@@ -194,8 +194,8 @@ The Toolchain suite does not depend on Vanllia or its build library.
 The original executable contract was checked against historical Kernel revision
 [`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) and
 [System Loader at `4177004`](https://github.com/shuyra-arche/system/blob/4177004b7f39c8e6458c158a5c4e0a4a71f48097/server/src/system/loader/image/elf.rs).
-The startup fixture is being migrated to Kernel ABI v6; static validation is not
-proof of current-Kernel execution.
+The ABI v6 startup fixture also has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v6-startup)
+that boots Capsule v2 and checks Kernel termination on one and two harts.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
 - Separate readable RX, R and RW load segments with nonoverlapping 4 KiB pages.
