@@ -1,4 +1,4 @@
-# Toolchain std bootstrap probe
+# Direct Kernel QEMU probes
 
 This focused scenario boots Toolchain's actual ELF as Kernel's initial task,
 using test-only capsule and native-child helpers in this repository. No System,
@@ -6,9 +6,37 @@ console, filesystem or other service is needed. It verifies the direct Kernel
 startup/memory/termination boundary in supervisor mode; it does **not** verify
 System's ELF loader, user-mode deployment or its lifecycle handshake.
 
-Build Toolchain with its `build-std` command, and build the Kernel revision
-consumed by that Toolchain. Supply an explicit OpenSBI firmware and its expected
-SHA-256. The test is opt-in; it never downloads or substitutes these inputs.
+Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
+SHA-256. The suite never downloads or substitutes these inputs.
+
+## ABI v7 startup
+
+Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
+`platform/riscv` at `eb37b0b0db299513274864cec23cee509a3cd3cc` (the integration
+revision used by this Kernel's CI), with both `kernel` and `kernel-api` resolved
+to the startup fixture's Kernel revision. Refresh the platform lockfile before
+building the image. Use the resulting ELF with `build/bootstrap.json`:
+
+```sh
+SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
+SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
+SHUYRA_KERNEL_REVISION=602ee97b8a4a5bc924c369c079c19ed00954e4c0 \
+SHUYRA_OPENSBI=/absolute/fw_jump.bin \
+SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
+cargo +nightly test --locked --test qemu startup_abi_v7 -- --ignored --nocapture
+```
+
+This probe validates the Capsule v2/ABI v7 initrd with Kernel API. The Kernel
+supplies the initial View and Ledger argument words, which the startup ELF
+reads through its pointer/count entry contract before calling `Unit.Exit` with
+`ExitScope::Task`. The probe checks the number
+of admitted harts, exactly one Kernel exit record for task 1 with reason zero
+and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
+
+## Historical std backend
+
+Run Toolchain's `build-std` command and build the historical Kernel revision
+it consumes. This probe uses `build/std.json` and Capsule v1:
 
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
@@ -16,7 +44,7 @@ SHUYRA_KERNEL_ELF=/absolute/kernel/target/riscv64gc-unknown-none-elf/release/shu
 SHUYRA_KERNEL_REVISION=65e89e1fd52e7fdf14e8ddcb65e75219a5684144 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu -- --ignored --nocapture
+cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
 ```
 
 `SHUYRA_QEMU` can select a `qemu-system-riscv64` executable. Each scenario runs

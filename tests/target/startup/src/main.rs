@@ -1,7 +1,10 @@
 #![no_std]
 #![no_main]
 
-use kernel_api::model::{exit::EXIT_PANIC, identity::VirtAddr};
+use kernel_api::{
+    address::VirtAddr,
+    model::{exit::EXIT_PANIC, unit::ExitScope},
+};
 
 // Kernel supplies a 16-byte-aligned stack and (argument words, word count) in
 // a0/a1. Capture the original SP before a Rust prologue changes it. There is
@@ -22,7 +25,13 @@ static mut ZERO: [u8; 4096] = [0; 4096];
 static mut DATA: u64 = 0x7368_7579_7261;
 
 fn exit(reason: usize, note: &'static str) -> ! {
-    kernel_client::call::room::reap(reason, VirtAddr::new(note.as_ptr() as usize), note.len())
+    kernel_client::call::unit::exit(
+        0,
+        reason as u64,
+        VirtAddr::new(note.as_ptr() as usize),
+        note.len(),
+        ExitScope::Task,
+    )
 }
 
 #[unsafe(no_mangle)]
