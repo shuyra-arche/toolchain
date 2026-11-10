@@ -14,7 +14,7 @@ unsafe impl RawMutex for Lock {
     type GuardMarker = GuardNoSend;
     fn lock(&self) {
         while !self.try_lock() {
-            kernel_client::call::room::starve();
+            kernel_client::call::room::yield_();
         }
     }
     fn try_lock(&self) -> bool {

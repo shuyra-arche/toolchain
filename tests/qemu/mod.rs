@@ -1,5 +1,4 @@
 //! Direct Kernel startup and std probes. System's Loader is tested separately.
-use capsule::Format;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{ffi::OsString, fs, path::PathBuf, process::Command};
@@ -21,6 +20,7 @@ struct Probe<'a> {
     elf: Vec<u8>,
     task: u32,
     reason: u32,
+    value: Option<u64>,
     note: &'a str,
 }
 
@@ -31,6 +31,7 @@ impl<'a> Probe<'a> {
         hash: &Value,
         task: u32,
         reason: u32,
+        value: Option<u64>,
         note: &'a str,
     ) -> Self {
         let path = path.as_str().expect("artifact path");
@@ -50,13 +51,14 @@ impl<'a> Probe<'a> {
             elf,
             task,
             reason,
+            value,
             note,
         }
     }
 }
 
 struct Run {
-    format: Format,
+    launcher: Option<Vec<u8>>,
     kernel: PathBuf,
     firmware: PathBuf,
     qemu: OsString,
@@ -66,7 +68,12 @@ struct Run {
 }
 
 impl Run {
-    fn new(format: Format, receipt: Value, receipt_bytes: &[u8], kernel_revision: &str) -> Self {
+    fn new(
+        launcher: Option<Vec<u8>>,
+        receipt: Value,
+        receipt_bytes: &[u8],
+        kernel_revision: &str,
+    ) -> Self {
         assert_eq!(receipt["schema"], 1);
         assert_eq!(receipt["target_build"], "passed");
         let kernel = input("SHUYRA_KERNEL_ELF");
@@ -92,10 +99,11 @@ impl Run {
             "scope": "direct Kernel bootstrap; System loader not exercised",
             "toolchain_receipt_sha256": digest(receipt_bytes), "toolchain_receipt": receipt,
             "kernel_revision": kernel_revision, "kernel_sha256": digest(&fs::read(&kernel).unwrap()),
+            "launcher_sha256": launcher.as_deref().map(digest),
             "firmware_sha256": firmware_hash, "qemu": String::from_utf8_lossy(&version.stdout),
         });
         Self {
-            format,
+            launcher,
             kernel,
             firmware,
             qemu,
@@ -111,9 +119,16 @@ impl Run {
             elf,
             task,
             reason,
+            value,
             note,
         } = probe;
-        let initrd = capsule::initrd(elf, self.format);
+        let initrd = match (&self.launcher, value) {
+            (Some(launcher), Some(value)) => {
+                capsule::initrd(launcher, Some((elf, *task, *value, u64::from(*reason))))
+            }
+            (None, None) => capsule::initrd(elf, None),
+            _ => panic!("launcher and Team exit value must be supplied together"),
+        };
         let directory = self.evidence.join(format!("{name}-{harts}-harts"));
         fs::create_dir_all(&directory).unwrap();
         let initrd_path = directory.join("initrd.bin");
@@ -136,10 +151,14 @@ impl Run {
             .replace('\r', "");
         let expected = format!("exit tid={task} reason={reason:#x} note: {note}");
         let expected_cpus = format!("cpu: admitted={harts} boot=");
-        let harts_admitted = matches!(self.format, Format::Legacy)
-            || uart.lines().any(|line| line.starts_with(&expected_cpus));
+        let harts_admitted = uart.lines().any(|line| line.starts_with(&expected_cpus));
+        let team_observed = value.is_none()
+            || uart
+                .lines()
+                .any(|line| line == "exit tid=1 reason=0x0 note: toolchain: std team observed");
         let passed = result.is_ok()
             && harts_admitted
+            && team_observed
             && uart.lines().filter(|line| *line == expected).count() == 1
             && uart
                 .lines()
@@ -147,7 +166,7 @@ impl Run {
             && !uart.contains("boot failed");
         self.results.push(json!({
             "fixture": name, "harts": harts, "elf_sha256": digest(elf),
-            "initrd_sha256": digest(&initrd), "expected_exit": expected,
+            "initrd_sha256": digest(&initrd), "expected_exit": expected, "team_result": value,
             "passed": passed,
         }));
         self.report["scenarios"] = json!(self.results);
@@ -211,9 +230,10 @@ fn startup_abi_v7() {
         &receipt["elf"]["sha256"],
         1,
         0,
+        None,
         "toolchain: startup passed",
     );
-    let mut run = Run::new(Format::V7, receipt, &receipt_bytes, &kernel_revision);
+    let mut run = Run::new(None, receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
         run.boot(&probe, harts);
     }
@@ -224,19 +244,26 @@ fn startup_abi_v7() {
 fn std_main_allocator_and_termination() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
-    let mut run = Run::new(Format::Legacy, receipt, &receipt_bytes, &kernel_revision());
+    let kernel_revision = kernel_revision();
+    let pin: toml::Value = toml::from_str(include_str!("../target/std/Cargo.toml")).unwrap();
+    assert_eq!(
+        pin["dependencies"]["kernel-api"]["rev"].as_str(),
+        Some(kernel_revision.as_str())
+    );
+    let launcher = build_launcher();
+    let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
-        for (name, task, reason, note) in [
-            ("toolchain-std", 1, 0, "toolchain: std main returned"),
-            ("std-exit", 1, 23, "toolchain: std process exit"),
-            ("std-panic", 1, 0xffffff01, "toolchain: std abort"),
-            ("std-oom", 1, 0xffffff01, "toolchain: std abort"),
-            ("std-threads", 1, 0, "toolchain: std main returned"),
-            ("std-waits", 1, 0, "toolchain: std main returned"),
-            ("std-thread-exit", 2, 23, "toolchain: std process exit"),
-            ("std-thread-panic", 2, 0xffffff01, "toolchain: std abort"),
-            ("std-tls-main", 1, 0xffffff01, "toolchain: std abort"),
-            ("std-thread-fault", 1, 0xffffff01, "toolchain: std abort"),
+        for (name, task, reason, value, note) in [
+            ("toolchain-std", 3, 0, 0, "toolchain: std main returned"),
+            ("std-exit", 3, 0, 23, "toolchain: std process exit"),
+            ("std-panic", 3, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-oom", 3, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-threads", 3, 0, 0, "toolchain: std main returned"),
+            ("std-waits", 3, 0, 0, "toolchain: std main returned"),
+            ("std-thread-exit", 4, 0, 23, "toolchain: std process exit"),
+            ("std-thread-panic", 4, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-tls-main", 3, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-thread-fault", 3, 0xffffff01, 0, "toolchain: std abort"),
         ] {
             let artifact = &run.report["toolchain_receipt"]["artifacts"][name];
             let probe = Probe::new(
@@ -245,11 +272,47 @@ fn std_main_allocator_and_termination() {
                 &artifact["elf"]["sha256"],
                 task,
                 reason,
+                Some(value),
                 note,
             );
             run.boot(&probe, harts);
         }
     }
+}
+
+fn build_launcher() -> Vec<u8> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("tests/target/startup");
+    let target = root.join("target/qemu/launcher");
+    let build = Command::new("cargo")
+        .current_dir(&root)
+        .args([
+            "+nightly",
+            "rustc",
+            "--locked",
+            "--release",
+            "--target",
+            "riscv64gc-unknown-none-elf",
+            "--bin",
+            "std-launcher",
+            "--manifest-path",
+        ])
+        .arg(fixture.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target)
+        .args(["--", "-C", "relocation-model=static", "-C"])
+        .arg(format!(
+            "link-arg=-T{}",
+            fixture.join("launcher.ld").display()
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    fs::read(target.join("riscv64gc-unknown-none-elf/release/std-launcher")).unwrap()
 }
 
 #[test]

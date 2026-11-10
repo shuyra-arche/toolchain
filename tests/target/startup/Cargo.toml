@@ -19,3 +19,9 @@ kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602
 
 [profile.release]
 panic = "abort"
+
+[[bin]]
+name = "std-launcher"
+path = "src/launcher/main.rs"
+test = false
+bench = false

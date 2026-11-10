@@ -1,7 +1,4 @@
-use kernel_api::{
-    abi::call::room::RoomFail,
-    model::{identity::VirtAddr, wait::Wait},
-};
+use kernel_api::{abi::call::room::RoomFail, address::VirtAddr, model::wait::Wait};
 use kernel_client::call::room;
 use std::{
     sync::{
@@ -31,11 +28,11 @@ fn wake(word: &AtomicU32, all: bool) -> usize {
 }
 fn raw_contract() {
     let word = Arc::new(AtomicU32::new(17));
-    assert!(wait(&word, 18, Wait::Forever));
-    assert!(!wait(&word, 17, Wait::POLL));
+    assert!(wait(&word, 18, Wait::Infinite));
+    assert!(!wait(&word, 17, Wait::Poll));
     assert_eq!(wake(&word, true), 0);
     assert_eq!(
-        room::wait_value(VirtAddr::new(1), 0, Wait::POLL)
+        room::wait_value(VirtAddr::new(1), 0, Wait::Poll)
             .unwrap_err()
             .source,
         RoomFail::Invalid
@@ -47,26 +44,31 @@ fn raw_contract() {
         RoomFail::Invalid
     );
     assert_eq!(
-        room::wait_value(VirtAddr::new(0), 0, Wait::POLL)
+        room::wait_value(VirtAddr::new(0), 0, Wait::Poll)
             .unwrap_err()
             .source,
         RoomFail::Denied
     );
-    // Event beacons and value waits at the same numeric key are disjoint.
-    assert!(!room::wake(address(&word).get()));
-    assert!(!wait(&word, 17, Wait::AtMost(2)));
-    room::wait(address(&word).get(), Wait::POLL).unwrap();
+    assert!(!wait(
+        &word,
+        17,
+        room::deadline_after(Duration::from_millis(2))
+    ));
     // A wake without waiters must not leave a token for the next value wait.
     for _ in 0..8 {
         assert_eq!(wake(&word, false), 0);
         let start = Instant::now();
-        assert!(!wait(&word, 17, Wait::AtMost(2)));
+        assert!(!wait(
+            &word,
+            17,
+            room::deadline_after(Duration::from_millis(2))
+        ));
         assert!(start.elapsed() >= Duration::from_millis(2));
         assert_eq!(wake(&word, true), 0);
     }
     // An unchanged value still returns on notification. The nonzero wake count
     // proves the child entered a Kernel queue instead of cooperative polling.
-    for timeout in [Wait::Forever, Wait::AtMost(usize::MAX - 1)] {
+    for timeout in [Wait::Infinite, Wait::At(u64::MAX)] {
         let child_word = word.clone();
         let child = thread::spawn(move || assert!(wait(&child_word, 17, timeout)));
         let start = Instant::now();
@@ -87,7 +89,7 @@ fn raw_contract() {
         let (word, entered) = (word.clone(), entered.clone());
         children.push(thread::spawn(move || {
             entered.fetch_add(1, Release);
-            assert!(wait(&word, 17, Wait::Forever));
+            assert!(wait(&word, 17, Wait::Infinite));
         }));
     }
     while entered.load(Acquire) != 4 {
@@ -120,7 +122,7 @@ fn lost_wake_races() {
     let child = thread::spawn(move || {
         for n in 1..=256 {
             while s.load(Acquire) != n {
-                wait(&s, n - 1, Wait::Forever);
+                wait(&s, n - 1, Wait::Infinite);
             }
             r.store(n, Release);
             wake(&r, false);
@@ -133,7 +135,7 @@ fn lost_wake_races() {
         }
         wake(&sent, false);
         while received.load(Acquire) != n {
-            wait(&received, n - 1, Wait::Forever);
+            wait(&received, n - 1, Wait::Infinite);
         }
     }
     child.join().unwrap();

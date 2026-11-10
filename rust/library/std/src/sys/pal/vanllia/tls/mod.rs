@@ -1,5 +1,6 @@
 //! Key-based TLS with one stack-owned table per Kernel task, addressed by tp.
 use crate::{alloc::System, boxed::Box, cell::Cell, ptr};
+use kernel_api::model::identity::PendId;
 pub type Key = usize;
 pub struct LazyKey {
     dtor: Option<unsafe extern "C" fn(*mut u8)>,
@@ -19,11 +20,13 @@ struct Entry {
 }
 pub struct State {
     head: Cell<*mut Entry>,
+    notification: PendId,
 }
 impl State {
-    pub const fn new() -> Self {
+    pub const fn new(notification: PendId) -> Self {
         Self {
             head: Cell::new(ptr::null_mut()),
+            notification,
         }
     }
     // State must stay at this address until the task stops; never expose it to
@@ -40,6 +43,9 @@ fn state() -> &'static State {
         core::arch::asm!("mv {}, tp", out(reg) address, options(nomem, nostack));
         &*address
     }
+}
+pub(super) fn notification() -> PendId {
+    state().notification
 }
 pub unsafe fn get(key: Key) -> *mut u8 {
     let mut entry = state().head.get();
