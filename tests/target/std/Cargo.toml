@@ -62,8 +62,8 @@ test = false
 bench = false
 
 [dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
-kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "fce8030f9e6dbccca869094721d032f3110891f5" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "fce8030f9e6dbccca869094721d032f3110891f5" }
 
 [[bin]]
 name = "std-waits"
@@ -74,5 +74,11 @@ bench = false
 [[bin]]
 name = "std-backtrace"
 path = "src/backtrace/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "std-parallelism"
+path = "src/parallelism/main.rs"
 test = false
 bench = false

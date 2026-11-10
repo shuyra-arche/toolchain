@@ -50,6 +50,7 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
         "std-thread-fault",
         "std-waits",
         "std-backtrace",
+        "std-parallelism",
     ] {
         let mut command = stage.cargo(&compiler);
         command

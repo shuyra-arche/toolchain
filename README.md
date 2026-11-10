@@ -36,7 +36,7 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`602ee97b8a4a5bc924c369c079c19ed00954e4c0`](https://github.com/shuyra-arche/kernel/tree/602ee97b8a4a5bc924c369c079c19ed00954e4c0) — ABI v7 |
+| Kernel API/Client (startup, std and QEMU) | [`fce8030f9e6dbccca869094721d032f3110891f5`](https://github.com/shuyra-arche/kernel/tree/fce8030f9e6dbccca869094721d032f3110891f5) — ABI v7 |
 
 Use the matching Kernel and Capsule v2 for both targets.
 
@@ -148,7 +148,9 @@ waiters without leaving notification tokens. Queues are private to each Space.
 Only transient mapping `Busy` retries yield; ordinary waiters leave the runnable
 queue. Timeouts retain the original budget across those retries. This does not
 add fairness guarantees. `Instant`, sleep and timed waits use Kernel's monotonic clock.
-`available_parallelism` reports unavailable rather than inventing a CPU count.
+`available_parallelism` reads the current ordinary scheduling pool through
+`Room.Inspect(Ordinary)`. The estimate excludes offline and real-time reserved
+Harts. On older ABI v7 Kernels without Inspect it reports unavailable.
 The broker reserves completion slots for up to 1022 workers or unreleased
 JoinHandles. The Kernel counts the broker and main against the Team member limit.
 
@@ -188,6 +190,7 @@ not execute the programs. Outputs are under
   than hang or return normally.
 - `std-backtrace`: main and worker captures, with the worker's trace formatted
   after it exits and both call chains resolved by the host probe.
+- `std-parallelism`: ordinary pool size and fallback on an older ABI v7 Kernel.
 
 Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
 `tests/qemu/`. It checks these ELF hashes, validates their format through the

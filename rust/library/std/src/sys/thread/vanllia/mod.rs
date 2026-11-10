@@ -1,6 +1,7 @@
 use crate::sys::pal::broker::{self, Request};
 use crate::{boxed::Box, ffi::CStr, io, num::NonZero, thread::ThreadInit, time::Duration};
 use kernel_api::{
+    abi::call::room::RoomQuery,
     address::{PAGE_SIZE, VirtAddr},
     model::unit::{ExitScope, UnitQuery, UnitTarget},
 };
@@ -87,7 +88,10 @@ unsafe extern "C" fn __shuyra_thread_start(args: *const usize, count: usize) -> 
 }
 
 pub fn available_parallelism() -> io::Result<NonZero<usize>> {
-    Err(io::Error::UNKNOWN_THREAD_COUNT)
+    room::inspect(RoomQuery::Ordinary)
+        .ok()
+        .and_then(NonZero::new)
+        .ok_or(io::Error::UNKNOWN_THREAD_COUNT)
 }
 
 pub fn current_os_id() -> Option<u64> {

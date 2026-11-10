@@ -18,7 +18,7 @@ building the image. Use the resulting ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=602ee97b8a4a5bc924c369c079c19ed00954e4c0 \
+SHUYRA_KERNEL_REVISION=fce8030f9e6dbccca869094721d032f3110891f5 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu startup_abi_v7 -- --ignored --nocapture
@@ -43,7 +43,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=602ee97b8a4a5bc924c369c079c19ed00954e4c0 \
+SHUYRA_KERNEL_REVISION=fce8030f9e6dbccca869094721d032f3110891f5 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
@@ -58,6 +58,7 @@ all-tasks-exited shutdown.
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |
 | `toolchain-std`, `std-threads`, `std-waits`, `std-backtrace` | `0` | `0` | `toolchain: std main returned` |
+| `std-parallelism` | Hart count or `0` for unavailable | `0` | `toolchain: std main returned` |
 | `std-exit`, `std-thread-exit` | `23` | `0` | `toolchain: std process exit` |
 | `std-panic`, `std-oom`, `std-thread-panic`, `std-tls-main`, `std-thread-fault` | `0` | `0xffffff01` | `toolchain: std abort` |
 
@@ -82,7 +83,12 @@ expiry, invalid addresses, wake-one/broadcast, finite-timeout
 overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. The backtrace probe resolves the
 main and worker call chains from the exact fixture ELF and records both
-symbolized traces. The opt-in test covers 22 QEMU runs.
+symbolized traces. The opt-in test covers 24 QEMU runs.
+
+To verify the `available_parallelism` fallback, run the same suite and std
+receipt with the pre-Inspect ABI v7 Kernel at
+`602ee97b8a4a5bc924c369c079c19ed00954e4c0` and its matching ELF. Only the
+parallelism fixture's expected exit value changes to zero.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned
