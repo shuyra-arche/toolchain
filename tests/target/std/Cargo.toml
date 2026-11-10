@@ -70,3 +70,9 @@ name = "std-waits"
 path = "src/waits/main.rs"
 test = false
 bench = false
+
+[[bin]]
+name = "std-backtrace"
+path = "src/backtrace/main.rs"
+test = false
+bench = false
