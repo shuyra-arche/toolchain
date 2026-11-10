@@ -1,4 +1,5 @@
 //! Vanllia process entry and termination.
+pub(crate) mod backtrace;
 pub(crate) mod broker;
 pub(crate) mod tls;
 use kernel_api::{
@@ -6,6 +7,8 @@ use kernel_api::{
     model::{exit::EXIT_PANIC, unit::ExitScope},
 };
 use kernel_client::call::unit;
+
+const MAIN_STACK: usize = 256 * 1024;
 
 pub fn unsupported<T>() -> crate::io::Result<T> {
     Err(unsupported_err())
@@ -24,6 +27,7 @@ core::arch::global_asm!(
     ".option norelax",
     "la gp, __global_pointer$",
     ".option pop",
+    "li tp, 0",
     "andi t0, sp, 15",
     "bnez t0, __shuyra_bad_entry",
     "tail __shuyra_start",
@@ -34,6 +38,7 @@ core::arch::global_asm!(
     ".option norelax",
     "la gp, __global_pointer$",
     ".option pop",
+    "li s0, 0",
     "tail __shuyra_main",
 );
 
@@ -51,8 +56,11 @@ extern "C" fn __shuyra_start() -> ! {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn __shuyra_main() -> ! {
-    let state = tls::State::new(broker::notification());
+extern "C" fn __shuyra_main(args: *const usize, count: usize) -> ! {
+    if count != 0 {
+        abort_internal();
+    }
+    let state = tls::State::new(broker::notification(), args, count, MAIN_STACK);
     unsafe {
         state.install();
     }

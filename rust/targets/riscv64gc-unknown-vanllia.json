@@ -13,6 +13,7 @@
   "linker-flavor": "gnu-lld",
   "relocation-model": "static",
   "code-model": "medium",
+  "frame-pointer": "always",
   "panic-strategy": "abort",
   "eh-frame-header": false,
   "emit-debug-gdb-scripts": false

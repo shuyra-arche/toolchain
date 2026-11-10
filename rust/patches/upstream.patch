@@ -27,6 +27,42 @@ diff --git a/library/Cargo.toml b/library/Cargo.toml
 +kernel-api = { path = "../dependencies/kernel-api" }
 +kernel-client = { path = "../dependencies/kernel-client" }
 +kernel-api-macros = { path = "../dependencies/kernel-api-macros" }
+diff --git a/library/backtrace/src/backtrace/mod.rs b/library/backtrace/src/backtrace/mod.rs
+--- a/library/backtrace/src/backtrace/mod.rs
++++ b/library/backtrace/src/backtrace/mod.rs
+@@ -174,6 +174,9 @@ cfg_if::cfg_if! {
+         pub(crate) mod miri;
+         use self::miri::trace as trace_imp;
+         pub(crate) use self::miri::Frame as FrameImp;
++    } else if #[cfg(all(backtrace_in_libstd, target_os = "vanllia"))] {
++        use crate::sys::backtrace::vanllia::trace as trace_imp;
++        pub(crate) use crate::sys::backtrace::vanllia::Frame as FrameImp;
+     } else if #[cfg(
+         any(
+             all(
+diff --git a/library/backtrace/src/print.rs b/library/backtrace/src/print.rs
+--- a/library/backtrace/src/print.rs
++++ b/library/backtrace/src/print.rs
+@@ -236,15 +236,17 @@ impl BacktraceFrameFmt<'_, '_> {
+ 
+         // Print the index of the frame as well as the optional instruction
+         // pointer of the frame. If we're beyond the first symbol of this frame
+         // though we just print appropriate whitespace.
++        let show_address = matches!(self.fmt.format, PrintFmt::Full)
++            || cfg!(all(backtrace_in_libstd, target_os = "vanllia"));
+         if self.symbol_index == 0 {
+             write!(self.fmt.fmt, "{:4}: ", self.fmt.frame_index)?;
+-            if let PrintFmt::Full = self.fmt.format {
++            if show_address {
+                 write!(self.fmt.fmt, "{frame_ip:HEX_WIDTH$?} - ")?;
+             }
+         } else {
+             write!(self.fmt.fmt, "      ")?;
+-            if let PrintFmt::Full = self.fmt.format {
++            if show_address {
+                 write!(self.fmt.fmt, "{:1$}", "", HEX_WIDTH + 3)?;
+             }
+         }
 diff --git a/library/panic_unwind/Cargo.toml b/library/panic_unwind/Cargo.toml
 --- a/library/panic_unwind/Cargo.toml
 +++ b/library/panic_unwind/Cargo.toml
@@ -58,8 +94,8 @@ diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
 +
 +[target.'cfg(target_os = "vanllia")'.dependencies]
 +talc = { version = "5.1.1", default-features = false }
-+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "87c70126387094eee5acb1e2e95af42cd2aabbe0" }
-+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "87c70126387094eee5acb1e2e95af42cd2aabbe0" }
++kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "fce8030f9e6dbccca869094721d032f3110891f5" }
++kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "fce8030f9e6dbccca869094721d032f3110891f5" }
 diff --git a/library/std/build.rs b/library/std/build.rs
 --- a/library/std/build.rs
 +++ b/library/std/build.rs
@@ -99,6 +135,17 @@ diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
      any(target_family = "unix", target_os = "wasi", target_os = "teeos", target_os = "trusty") => {
          mod unix;
          use unix as imp;
+diff --git a/library/std/src/sys/backtrace.rs b/library/std/src/sys/backtrace.rs
+--- a/library/std/src/sys/backtrace.rs
++++ b/library/std/src/sys/backtrace.rs
+@@ -1,4 +1,7 @@
+ //! Common code for printing backtraces.
+ #![forbid(unsafe_op_in_unsafe_fn)]
+ 
++#[cfg(target_os = "vanllia")]
++pub(crate) use super::pal::backtrace as vanllia;
++
+ use crate::backtrace_rs::{self, BacktraceFmt, BytesOrWideString, PrintFmt};
 diff --git a/library/std/src/sys/env_consts.rs b/library/std/src/sys/env_consts.rs
 --- a/library/std/src/sys/env_consts.rs
 +++ b/library/std/src/sys/env_consts.rs

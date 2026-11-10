@@ -234,7 +234,7 @@ impl Broker {
                     return 0;
                 };
                 WORKER[slot].store(0, Release);
-                let worker = spawn(self.endpoint, entry, stack, &[start, slot]);
+                let worker = spawn(self.endpoint, entry, stack, &[start, slot, stack]);
                 self.workers[slot] = worker;
                 if matches!(worker, Worker::Running(_)) {
                     slot + 1
@@ -323,7 +323,7 @@ pub(super) fn run(main: usize) -> ! {
         if rights.contains(CreationRights::FLAT | CreationRights::SIGN))
     });
     let endpoint = sign::create(license).unwrap_or_else(|_| super::abort_internal());
-    let Worker::Running(main) = spawn(endpoint, main, 256 * 1024, &[]) else {
+    let Worker::Running(main) = spawn(endpoint, main, super::MAIN_STACK, &[]) else {
         super::abort_internal();
     };
     Broker {

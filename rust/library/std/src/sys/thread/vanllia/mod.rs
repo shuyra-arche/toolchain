@@ -60,6 +60,7 @@ core::arch::global_asm!(
     ".option norelax",
     "la gp, __global_pointer$",
     ".option pop",
+    "li s0, 0",
     "tail __shuyra_thread_start",
 );
 unsafe extern "C" {
@@ -68,12 +69,13 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __shuyra_thread_start(args: *const usize, count: usize) -> ! {
-    let tls = crate::sys::pal::tls::State::new(broker::notification());
+    if count != 3 {
+        crate::sys::abort_internal();
+    }
+    let stack = unsafe { *args.add(2) };
+    let tls = crate::sys::pal::tls::State::new(broker::notification(), args, count, stack);
     unsafe {
         tls.install();
-    }
-    if count != 2 {
-        crate::sys::abort_internal();
     }
     let init = unsafe { *Box::from_raw((*args) as *mut Box<ThreadInit>) };
     let slot = unsafe { *args.add(1) };

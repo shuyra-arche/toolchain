@@ -36,7 +36,7 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`87c70126387094eee5acb1e2e95af42cd2aabbe0`](https://github.com/shuyra-arche/kernel/tree/87c70126387094eee5acb1e2e95af42cd2aabbe0) — ABI v7 |
+| Kernel API/Client (startup, std and QEMU) | [`fce8030f9e6dbccca869094721d032f3110891f5`](https://github.com/shuyra-arche/kernel/tree/fce8030f9e6dbccca869094721d032f3110891f5) — ABI v7 |
 
 Use the matching Kernel and Capsule v2 for both targets.
 
@@ -71,7 +71,7 @@ so Cargo selects the prepared sources. It is a build workspace, not a distributi
 
 | Maintained input | Responsibility |
 | --- | --- |
-| `rust/library/std/src/sys/` | Canonical Vanllia allocator, startup/TLS, threads, waits, time and unsupported console backend as ordinary Rust files |
+| `rust/library/std/src/sys/` | Canonical Vanllia allocator, startup/TLS, threads, waits, time, backtrace and unsupported console backend as ordinary Rust files |
 | `rust/patches/upstream.patch` | Current upstream platform selection, dependency declarations and other integration edits |
 | `rust/patches/dependencies.patch` | Private dependency manifest adaptations for sysroot core/alloc and relocated Kernel packages |
 | `rust/dependencies.toml` / `.lock` | External input selection and locked Cargo resolution |
@@ -154,6 +154,14 @@ Harts. On older ABI v7 Kernels without Inspect it reports unavailable.
 The broker reserves completion slots for up to 1022 workers or unreleased
 JoinHandles. The Kernel counts the broker and main against the Team member limit.
 
+`std::backtrace::Backtrace::force_capture()` captures RV64 frame pointers on the
+Rust main thread and workers. The target keeps frame pointers enabled. The
+runtime obtains stack bounds from the Task entry argument block and the stack
+size requested by the broker. The walk stops at an invalid link or after 128
+frames. Display prints return addresses. To resolve a frame on the host, run
+`addr2line -f -C -e <matching-elf> <return-address-minus-one>` against the exact
+unstripped executable.
+
 Service-backed console/fs/net/process facilities, wall-clock SystemTime,
 unwinding and service argument translation are not implemented. Console reads
 and writes return Unsupported, and unavailable random generation fails explicitly.
@@ -180,6 +188,8 @@ not execute the programs. Outputs are under
 - `std-tls-main`: main TLS destructor execution, observed through intentional abort.
 - `std-thread-fault`: a Kernel illegal-instruction fault must abort join rather
   than hang or return normally.
+- `std-backtrace`: main and worker captures, with the worker's trace formatted
+  after it exits and both call chains resolved by the host probe.
 - `std-parallelism`: ordinary pool size and fallback on an older ABI v7 Kernel.
 
 Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under

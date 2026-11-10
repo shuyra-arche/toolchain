@@ -1,5 +1,7 @@
 //! Key-based TLS with one stack-owned table per Kernel task, addressed by tp.
 use crate::{alloc::System, boxed::Box, cell::Cell, ptr};
+use core::ops::Range;
+use kernel_api::address::PAGE_SIZE;
 use kernel_api::model::identity::PendId;
 pub type Key = usize;
 pub struct LazyKey {
@@ -21,12 +23,23 @@ struct Entry {
 pub struct State {
     head: Cell<*mut Entry>,
     notification: PendId,
+    stack: Range<usize>,
 }
 impl State {
-    pub const fn new(notification: PendId) -> Self {
+    pub fn new(notification: PendId, args: *const usize, count: usize, size: usize) -> Self {
+        // UnitCreate::Task packs the copied argument words at the stack top.
+        // The broker requests a page-aligned stack size for every Rust Task.
+        let top = args.addr() + count * size_of::<usize>();
+        let bottom = top
+            .checked_sub(size)
+            .unwrap_or_else(|| super::abort_internal());
+        if !top.is_multiple_of(PAGE_SIZE) || !bottom.is_multiple_of(PAGE_SIZE) || bottom == top {
+            super::abort_internal();
+        }
         Self {
             head: Cell::new(ptr::null_mut()),
             notification,
+            stack: bottom..top,
         }
     }
     // State must stay at this address until the task stops; never expose it to
@@ -37,12 +50,19 @@ impl State {
         }
     }
 }
-fn state() -> &'static State {
+fn state_address() -> *const State {
     let address: *const State;
     unsafe {
         core::arch::asm!("mv {}, tp", out(reg) address, options(nomem, nostack));
-        &*address
     }
+    address
+}
+fn state() -> &'static State {
+    unsafe { &*state_address() }
+}
+pub(super) fn stack() -> Option<Range<usize>> {
+    // The initial broker Task clears tp and never installs Rust TLS.
+    unsafe { state_address().as_ref() }.map(|state| state.stack.clone())
 }
 pub(super) fn notification() -> PendId {
     state().notification

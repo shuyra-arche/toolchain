@@ -2,6 +2,7 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{ffi::OsString, fs, path::PathBuf, process::Command};
+mod backtrace;
 mod capsule;
 mod process;
 
@@ -156,7 +157,16 @@ impl Run {
             || uart
                 .lines()
                 .any(|line| line == "exit tid=1 reason=0x0 note: toolchain: std team observed");
+        let backtrace = if *name == "std-backtrace" && result.is_ok() {
+            let path = self.report["toolchain_receipt"]["artifacts"][*name]["path"]
+                .as_str()
+                .unwrap();
+            backtrace::verify(&uart, path, &directory)
+        } else {
+            Ok(())
+        };
         let passed = result.is_ok()
+            && backtrace.is_ok()
             && harts_admitted
             && team_observed
             && uart.lines().filter(|line| *line == expected).count() == 1
@@ -177,7 +187,7 @@ impl Run {
         .unwrap();
         assert!(
             passed,
-            "{name}: {result:?}; harts admitted: {harts_admitted}; expected {expected:?}; evidence: {}\n{uart}",
+            "{name}: {result:?}; backtrace: {backtrace:?}; harts admitted: {harts_admitted}; expected {expected:?}; evidence: {}\n{uart}",
             directory.display()
         );
     }
@@ -267,6 +277,7 @@ fn std_main_allocator_and_termination() {
             ("std-oom", 3, 0xffffff01, 0, "toolchain: std abort"),
             ("std-threads", 3, 0, 0, "toolchain: std main returned"),
             ("std-waits", 3, 0, 0, "toolchain: std main returned"),
+            ("std-backtrace", 3, 0, 0, "toolchain: std main returned"),
             (
                 "std-parallelism",
                 3,

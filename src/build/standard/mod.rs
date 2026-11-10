@@ -49,6 +49,7 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
         "std-tls-main",
         "std-thread-fault",
         "std-waits",
+        "std-backtrace",
         "std-parallelism",
     ] {
         let mut command = stage.cargo(&compiler);
