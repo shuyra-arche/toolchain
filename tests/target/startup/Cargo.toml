@@ -14,8 +14,8 @@ test = false
 bench = false
 
 [dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
-kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "87c70126387094eee5acb1e2e95af42cd2aabbe0" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "87c70126387094eee5acb1e2e95af42cd2aabbe0" }
 
 [profile.release]
 panic = "abort"

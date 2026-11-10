@@ -242,17 +242,24 @@ fn startup_abi_v7() {
 #[test]
 #[ignore = "requires Toolchain std receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
 fn std_main_allocator_and_termination() {
+    const PRE_INSPECT_KERNEL: &str = "602ee97b8a4a5bc924c369c079c19ed00954e4c0";
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
     let pin: toml::Value = toml::from_str(include_str!("../target/std/Cargo.toml")).unwrap();
-    assert_eq!(
-        pin["dependencies"]["kernel-api"]["rev"].as_str(),
-        Some(kernel_revision.as_str())
+    let pinned = pin["dependencies"]["kernel-api"]["rev"].as_str().unwrap();
+    assert!(
+        kernel_revision == pinned || kernel_revision == PRE_INSPECT_KERNEL,
+        "expected the pinned Kernel or the pre-Inspect ABI v7 reference"
     );
     let launcher = build_launcher();
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
+        let parallelism = if kernel_revision == pinned {
+            u64::from(harts)
+        } else {
+            0
+        };
         for (name, task, reason, value, note) in [
             ("toolchain-std", 3, 0, 0, "toolchain: std main returned"),
             ("std-exit", 3, 0, 23, "toolchain: std process exit"),
@@ -260,6 +267,13 @@ fn std_main_allocator_and_termination() {
             ("std-oom", 3, 0xffffff01, 0, "toolchain: std abort"),
             ("std-threads", 3, 0, 0, "toolchain: std main returned"),
             ("std-waits", 3, 0, 0, "toolchain: std main returned"),
+            (
+                "std-parallelism",
+                3,
+                0,
+                parallelism,
+                "toolchain: std main returned",
+            ),
             ("std-thread-exit", 4, 0, 23, "toolchain: std process exit"),
             ("std-thread-panic", 4, 0xffffff01, 0, "toolchain: std abort"),
             ("std-tls-main", 3, 0xffffff01, 0, "toolchain: std abort"),
