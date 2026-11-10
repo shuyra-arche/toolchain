@@ -126,6 +126,11 @@ fn main() {
             .spawn(|| panic!("ran failed spawn"))
             .is_err()
     );
+    // Retained exit receipts must not turn the Team's member limit into a
+    // lifetime cap on sequential thread creation.
+    for _ in 0..1050 {
+        thread::spawn(|| {}).join().unwrap();
+    }
     // Main return must stop a detached worker which will never return itself.
     let ready = Arc::new(Barrier::new(2));
     let child_ready = ready.clone();

@@ -36,12 +36,9 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup `build`) | [`602ee97b8a4a5bc924c369c079c19ed00954e4c0`](https://github.com/shuyra-arche/kernel/tree/602ee97b8a4a5bc924c369c079c19ed00954e4c0) — ABI v7 migration bootstrap |
-| Kernel API/Client (experimental `build-std` and QEMU suite) | [`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) — awaiting backend migration |
+| Kernel API/Client (startup, std and QEMU) | [`602ee97b8a4a5bc924c369c079c19ed00954e4c0`](https://github.com/shuyra-arche/kernel/tree/602ee97b8a4a5bc924c369c079c19ed00954e4c0) — ABI v7 |
 
-The startup and experimental `std` artifacts each require their matching Kernel
-revision. The remaining `std` migration is tracked in
-[Issue #8](https://github.com/shuyra-arche/toolchain/issues/8).
+Use the matching Kernel and Capsule v2 for both targets.
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
 fingerprint of the installed Rust library source tree, hashes of fixture inputs,
@@ -89,7 +86,9 @@ still required for behavior changes. There is no separate Runtime package.
 Owned files may only add paths absent from upstream. Preparation refuses a path
 collision, symlinked source, or patch that changes an owned backend file. File
 content and path fingerprints invalidate the prepared tree on additions, edits
-and removals; build receipts also detect changes during compilation. Updating
+and removals. The std build resets its Cargo cache when the prepared dependency
+fingerprint or compiler changes, including changes to vendored ABI macros.
+Build receipts also detect changes during compilation. Updating
 nightly may still require adapting upstream interfaces or integration hunks;
 failed patch application is reported rather than silently skipped.
 
@@ -100,11 +99,11 @@ licensing notices are retained in the generated tree.
 
 | Boundary | Implemented behavior |
 | --- | --- |
-| Entry | `_start` establishes `gp`, checks stack alignment and invokes rustc's generated `main` entry; Kernel argument words are not miscast as C strings, so `std::env::args()` is empty |
-| Normal return | Upstream `std::rt` initializes the main thread, calls user `main` and `Termination::report`, then runs std cleanup; the backend runs TLS destructors, stops other std-managed tasks and calls Kernel Client `Reap` |
-| Explicit exit / abort | `process::exit` preserves its code; panic and allocation-error handling abort with the Kernel panic reason, without unwinding |
-| Allocation | A process-shared `TalcLock` heap supplies objects; `GlobalAllocSource<Pages>` obtains backing mappings with SpaceMembers control and immediately releases temporary task-local source handles |
-| Failure / realloc | Transient mapping `Busy` yields and retries; other arithmetic/acquire/attach failure returns null; failed attachment releases its source; failed realloc preserves the old allocation; cleanup failure aborts without allocating |
+| Entry | `_start` initializes the process broker. The broker creates the Rust main Task, which installs TLS and invokes rustc's generated `main`. `std::env::args()` is empty. |
+| Normal return | Upstream `std::rt` calls user `main` and `Termination::report`. After normal cleanup and TLS destructors, the main Task commits the Team exit value through `Unit.Exit(Team)`. |
+| Explicit exit / abort | `process::exit` preserves the 32-bit code in the Team result. Panic and allocation-error handling use the Kernel panic reason and abort without unwinding. |
+| Allocation | A process-shared `TalcLock` obtains backing pages through the broker. The broker holds the private Cell authority and publishes or retracts its Internal Memos. |
+| Failure / realloc | The broker retries transient mapping contention, rolls back failed publication and returns null for failed allocation. Failed realloc preserves the original allocation. |
 
 Talc 5.1.1 reuses and coalesces small allocations in shared heaps. Backing blocks
 start at 16 KiB and grow to fit requests; completely free heaps are returned to
@@ -112,26 +111,30 @@ Kernel, while the first heap can remain for Talc metadata. There is no fixed hea
 or per-object mapping. Alignment, zeroing and realloc preservation are supported;
 impossible sizes are rejected before Talc's source-size arithmetic.
 
-The heap lock uses atomics and direct Kernel yield, without allocation, TLS or
-std locks. Backing allocation calls Kernel directly, never `System` recursively.
-Cross-thread frees and creator-thread exit retain the existing SpaceMembers
-ownership semantics. This is one shared heap, not a per-thread or scalable
-sharded allocator. Physical page materialization stays under Kernel policy.
+The process broker runs in the initial Task of a Team configured with
+`member_exit`. The launcher grants that Task a `None` Pend with `FLAT | SIGN`
+before resuming it. The broker uses the grant to create backing Slots and a
+Sign endpoint. Worker Tasks receive a narrow Trigger branch for the endpoint.
+The shared mailbox uses address-space-private `Room.WaitValue` for callers and
+a retained Sign notification for the broker. Backing allocation and cleanup
+run without entering Rust's allocator on the broker. Mapping control survives
+the lifetime of individual allocating and freeing threads.
 
-`std::thread::spawn`, `Builder`, `join`, scoped threads and detached workers use
-Kernel tasks in the same Space. Kernel owns stacks and their reclamation. A
-completion flag is published after the closure and TLS cleanup; `join` acquires
-it before returning. An unfinished worker is awaited with blocking Kernel Join.
-If Kernel terminates a joined worker before cleanup, the
-process aborts instead of waiting forever. Spawn failure releases the closure.
-Normal main return, explicit exit and Rust panic-abort stop the other registered
-std tasks. Raw Kernel-created tasks are outside this registry and must not be
-mixed with these process-lifecycle assumptions. They also lack this TLS bootstrap
-and cannot directly enter this std backend.
+The broker creates and resumes each Rust Task and owns its Kernel exit receipt.
+It observes `SignSource::Join`, reads `Unit.Inspect` and wakes the Rust
+`JoinHandle` after the worker's exit. The worker separately publishes Rust
+completion after its closure and TLS destructors. A joined Task that ends
+before Rust completion aborts the Team. Spawn failure releases the closure.
+A `JoinHandle` can move to another thread or outlive its creator.
+
+The broker releases its Task receipts after Kernel reclamation. A Team creator
+that receives its own receipts must also release completed records to sustain
+sequential thread creation. Normal main return, explicit exit and panic-abort
+close the whole Team, including detached Tasks.
 
 `thread_local!` uses upstream key-based storage with a per-task table addressed
 by RISC-V `tp`; it does not require ELF TLS segments. Tables are installed before
-std initialization on the initial task and every spawned task. Values are
+std initialization on the Rust main Task and every worker. Values are
 isolated, destructors run before current-thread cleanup, and `join` waits for
 this cleanup. Destructors may initialize other keys; resurrection is limited to
 four passes, after which remaining values may leak, as with bounded key-based
@@ -146,7 +149,8 @@ Only transient mapping `Busy` retries yield; ordinary waiters leave the runnable
 queue. Timeouts retain the original budget across those retries. This does not
 add fairness guarantees. `Instant`, sleep and timed waits use Kernel's monotonic clock.
 `available_parallelism` reports unavailable rather than inventing a CPU count.
-The task registry is bounded at 1024 entries, including the initial task.
+The broker reserves completion slots for up to 1022 workers or unreleased
+JoinHandles. The Kernel counts the broker and main against the Team member limit.
 
 Service-backed console/fs/net/process facilities, wall-clock SystemTime,
 unwinding and service argument translation are not implemented. Console reads
@@ -183,17 +187,14 @@ The test requires matching Kernel exit records and all-tasks-exited shutdown on
 one and two harts. Evidence is stored under `target/qemu/<run>/`, separately from
 the build receipt.
 
-This directly boots the fixture as Kernel's initial supervisor task; it does not
-run System's Loader or claim user-mode deployment coverage. Vanllia owns tests
-that exercise its actual composition, artifact handoff and System Loader path.
-The Toolchain suite does not depend on Vanllia or its build library.
+The startup fixture boots as Kernel's initial supervisor Task. A test launcher
+starts the std fixtures in opted-in User Teams and observes their Task and Team
+exit values before retirement. Vanllia owns the assembled System Loader and
+artifact-handoff tests.
 
 ## Executable contract
 
-The original executable contract was checked against historical Kernel revision
-[`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) and
-[System Loader at `4177004`](https://github.com/shuyra-arche/system/blob/4177004b7f39c8e6458c158a5c4e0a4a71f48097/server/src/system/loader/image/elf.rs).
-The ABI v7 startup fixture also has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v7-startup)
+The ABI v7 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v7-startup)
 that boots Capsule v2 and checks Kernel termination on one and two harts.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
@@ -234,8 +235,7 @@ minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
 Assembled execution still needs a compatible Toolchain artifact handoff in
 Vanllia, with observed task termination and bounded failure/timeout handling.
 The std fixtures are verified through direct-Kernel QEMU execution on one and
-two harts. System-mediated
-execution and hardware remain unverified. Toolchain CI checks host behavior and
+two harts. System Loader and physical hardware validation are tracked separately. Toolchain CI checks host behavior and
 target compilation and the native-child timeout regression. Direct Kernel QEMU
 execution is opt-in in this repository; Vanllia owns assembled-system scenarios.
 
@@ -255,7 +255,7 @@ are tracked in [Vanllia #19](https://github.com/shuyra-arche/vanllia/issues/19).
 | `rust/` | Rust channel, maintained backend sources, locked dependencies, integration patches and target settings |
 | `tests/bootstrap/mod.rs` | Host CLI contract tests |
 | `tests/qemu/mod.rs` | Direct Kernel runtime acceptance and test-only boot/process helpers |
-| `tests/target/startup/` | Bootstrap fixture, linker script and Unit declaration |
+| `tests/target/startup/` | Bootstrap fixture, test-only std launcher, linker scripts and Unit declaration |
 | `tests/target/std/` | Main, allocation, thread/TLS and termination consumers |
 
 Generated `build/`, `target/`, `work/` and `dist/` paths are ignored. Upstream

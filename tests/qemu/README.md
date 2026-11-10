@@ -1,10 +1,8 @@
 # Direct Kernel QEMU probes
 
-This focused scenario boots Toolchain's actual ELF as Kernel's initial task,
-using test-only capsule and native-child helpers in this repository. No System,
-console, filesystem or other service is needed. It verifies the direct Kernel
-startup/memory/termination boundary in supervisor mode; it does **not** verify
-System's ELF loader, user-mode deployment or its lifecycle handshake.
+The startup fixture boots as Kernel's initial Task. The std fixtures run in
+opted-in User Teams started by a test-only launcher. These are direct Kernel
+probes. The assembled System Loader path is tracked in Vanllia.
 
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
@@ -33,37 +31,33 @@ reads through its pointer/count entry contract before calling `Unit.Exit` with
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
-## Historical std backend
+## ABI v7 std backend
 
-Run Toolchain's `build-std` command and build the historical Kernel revision
-it consumes. This probe uses `build/std.json` and Capsule v1:
+Run Toolchain's `build-std` command and use the same Kernel image as the startup
+probe. The QEMU test builds the no-std launcher with the
+`riscv64gc-unknown-none-elf` target. Install it with
+`rustup target add --toolchain nightly riscv64gc-unknown-none-elf`.
 
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
-SHUYRA_KERNEL_ELF=/absolute/kernel/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=65e89e1fd52e7fdf14e8ddcb65e75219a5684144 \
+SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
+SHUYRA_KERNEL_REVISION=602ee97b8a4a5bc924c369c079c19ed00954e4c0 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
 ```
 
-`SHUYRA_QEMU` can select a `qemu-system-riscv64` executable. Each scenario runs
-on both one and two harts, with a 20-second timeout per run and must exit QEMU successfully, emit exactly one matching
-Kernel exit record, and reach Kernel's all-tasks-exited shutdown. A printed
-application marker alone does not pass. The expected records are:
+`SHUYRA_QEMU` selects the native QEMU binary. Each scenario runs on one and
+two harts with a 20-second timeout. The launcher checks the retained Team and
+initiating Task results through `Unit.Inspect` and waits for Team retirement.
+The host verifies the admitted hart count, the Kernel exit records and
+all-tasks-exited shutdown.
 
-| Fixture | Reason | Kernel note |
-| --- | --- | --- |
-| `toolchain-std` | `0` | `toolchain: std main returned` |
-| `std-exit` | `23` | `toolchain: std process exit` |
-| `std-panic` | `0xffffff01` | `toolchain: std abort` |
-| `std-oom` | `0xffffff01` | `toolchain: std abort` |
-| `std-threads` | `0` | `toolchain: std main returned` |
-| `std-waits` | `0` | `toolchain: std main returned` |
-| `std-thread-exit` | `23` | `toolchain: std process exit` (task 2) |
-| `std-thread-panic` | `0xffffff01` | `toolchain: std abort` (task 2) |
-| `std-tls-main` | `0xffffff01` | `toolchain: std abort` |
-| `std-thread-fault` | `0xffffff01` | `toolchain: std abort` (joining task 1) |
+| Fixture | Exit value | Reason | Kernel note |
+| --- | --- | --- | --- |
+| `toolchain-std`, `std-threads`, `std-waits` | `0` | `0` | `toolchain: std main returned` |
+| `std-exit`, `std-thread-exit` | `23` | `0` | `toolchain: std process exit` |
+| `std-panic`, `std-oom`, `std-thread-panic`, `std-tls-main`, `std-thread-fault` | `0` | `0xffffff01` | `toolchain: std abort` |
 
 Toolchain owns the programs, assertions and execution. The test checks artifact
 hashes against the build receipt and public inspect CLI, encodes the capsule
@@ -80,9 +74,9 @@ The thread fixture covers TLS isolation and destructor ordering, cross-task heap
 ownership, concurrent allocation/free, join/scoped/detached workers,
 synchronization and timeouts. Process-exit
 probes require all tasks to halt, including a live detached worker on main return
-and the initial task on worker exit/panic. An illegal-instruction worker checks
+and the Rust main Task on worker exit or panic. An illegal-instruction worker checks
 that join aborts when Kernel ends a task before Rust cleanup. The wait fixture checks Kernel queue counts, comparison mismatch, poll and timed
-expiry, invalid addresses, event-key separation, wake-one/broadcast, finite-timeout
+expiry, invalid addresses, wake-one/broadcast, finite-timeout
 overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. These are 20 QEMU
 runs in one opt-in test, not host emulation of the Kernel boundary.

@@ -10,7 +10,7 @@ mod pages;
 // Preserve the previous Talc heap granularity: grow by at least four pages.
 // GlobalAllocSource returns completely free heaps to Pages; metadata may retain
 // the first heap. No fixed arena, separate Runtime or task-local allocator exists.
-const BLOCK_SIZE: usize = 4 * kernel_api::model::memory::PAGE_SIZE;
+const BLOCK_SIZE: usize = 4 * kernel_api::address::PAGE_SIZE;
 static HEAP: TalcLock<lock::Lock, GlobalAllocSource<pages::Pages>> =
     TalcLock::new(GlobalAllocSource::with_block_size(pages::Pages, BLOCK_SIZE));
 

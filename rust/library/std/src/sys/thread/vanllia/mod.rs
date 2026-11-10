@@ -1,121 +1,56 @@
-use crate::sync::atomic::{
-    AtomicBool, AtomicUsize,
-    Ordering::{AcqRel, Acquire, Relaxed, Release},
-};
-use crate::{
-    boxed::Box, ffi::CStr, io, num::NonZero, sync::Arc, thread::ThreadInit, time::Duration,
-};
-use kernel_api::model::{
-    identity::{TaskId, TeamId, VirtAddr},
-    unit::{JoinReply, UnitTarget},
-    wait::Wait,
+use crate::sys::pal::broker::{self, Request};
+use crate::{boxed::Box, ffi::CStr, io, num::NonZero, thread::ThreadInit, time::Duration};
+use kernel_api::{
+    address::{PAGE_SIZE, VirtAddr},
+    model::unit::{ExitScope, UnitQuery, UnitTarget},
 };
 use kernel_client::call::{room, unit};
 
 pub const DEFAULT_MIN_STACK_SIZE: usize = 256 * 1024;
-// Kernel currently admits at most 1024 members. Include the initial task.
-static TASKS: [AtomicUsize; 1024] = [const { AtomicUsize::new(0) }; 1024];
-static REGISTRY: AtomicBool = AtomicBool::new(false);
-static EXITING: AtomicUsize = AtomicUsize::new(0);
-struct Registry;
-impl Registry {
-    fn lock() -> Self {
-        while REGISTRY
-            .compare_exchange(false, true, Acquire, Relaxed)
-            .is_err()
-        {
-            yield_now();
-        }
-        Self
-    }
-}
-impl Drop for Registry {
-    fn drop(&mut self) {
-        REGISTRY.store(false, Release);
-    }
-}
-pub fn register_main() {
-    TASKS[0].store(unit::self_id().get(), Release);
-}
+
 pub struct Thread {
-    id: TaskId,
-    done: Arc<AtomicBool>,
+    slot: usize,
 }
-struct Start {
-    init: Box<ThreadInit>,
-    done: Arc<AtomicBool>,
-}
+
 impl Thread {
     pub unsafe fn new(stack: usize, init: Box<ThreadInit>) -> io::Result<Self> {
         let stack = stack
             .max(16384)
-            .checked_next_multiple_of(4096)
+            .checked_next_multiple_of(PAGE_SIZE)
             .filter(|size| *size <= isize::MAX as usize)
             .ok_or(io::const_error!(
                 io::ErrorKind::InvalidInput,
                 "invalid thread stack size"
             ))?;
-        let done = Arc::new(AtomicBool::new(false));
-        let start = Box::into_raw(Box::new(Start {
-            init,
-            done: done.clone(),
-        }));
-        let result = (|| {
-            let _guard = Registry::lock();
-            if EXITING.load(Acquire) != 0 {
-                return Err(io::const_error!(
-                    io::ErrorKind::Other,
-                    "Kernel thread operation failed"
-                ));
-            }
-            let slot = TASKS
-                .iter()
-                .skip(1)
-                .find(|slot| slot.load(Relaxed) == 0)
-                .ok_or(io::const_error!(
-                    io::ErrorKind::OutOfMemory,
-                    "thread registry full"
-                ))?;
-            let args = [start as usize];
-            let id = unit::spawn(
-                TeamId::new(0),
-                __shuyra_thread_entry as *const () as usize,
-                VirtAddr::new(args.as_ptr() as usize),
-                1,
-                stack,
-            )
-            .map_err(|_| {
-                io::const_error!(io::ErrorKind::Other, "Kernel thread operation failed")
-            })?;
-            slot.store(id.get(), Release);
-            if unit::embark(UnitTarget::Task(id)).is_err() {
-                let _ = unit::slay(UnitTarget::Task(id));
-                slot.store(0, Release);
-                return Err(io::const_error!(
-                    io::ErrorKind::Other,
-                    "Kernel thread operation failed"
-                ));
-            }
-            Ok(Self { id, done })
-        })();
-        if result.is_err() {
+        let start = Box::into_raw(Box::new(init));
+        let reply = broker::request(Request::Spawn {
+            entry: __shuyra_thread_entry as *const () as usize,
+            stack,
+            start: start as usize,
+        });
+        if reply == 0 {
             unsafe {
                 drop(Box::from_raw(start));
             }
+            return Err(io::const_error!(
+                io::ErrorKind::Other,
+                "Kernel thread operation failed"
+            ));
         }
-        result
+        Ok(Self { slot: reply - 1 })
     }
+
     pub fn join(self) {
-        if !self.done.load(Acquire) {
-            // Kernel Join blocks until exit, including faults which cannot
-            // publish Rust completion. A reaped task may already be absent.
-            let _ = unit::join(UnitTarget::Task(self.id), Wait::Forever, false);
-            if !self.done.load(Acquire) {
-                crate::sys::abort_internal();
-            }
-        }
+        broker::join(self.slot);
     }
 }
+
+impl Drop for Thread {
+    fn drop(&mut self) {
+        broker::release(self.slot);
+    }
+}
+
 core::arch::global_asm!(
     ".text",
     ".global __shuyra_thread_entry",
@@ -129,78 +64,50 @@ core::arch::global_asm!(
 unsafe extern "C" {
     fn __shuyra_thread_entry();
 }
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __shuyra_thread_start(args: *const usize, count: usize) -> ! {
-    let tls = crate::sys::pal::tls::State::new();
+    let tls = crate::sys::pal::tls::State::new(broker::notification());
     unsafe {
         tls.install();
     }
-    if count != 1 {
+    if count != 2 {
         crate::sys::abort_internal();
     }
-    let Start { init, done } = unsafe { *Box::from_raw((*args) as *mut Start) };
-    let start = init.init();
-    start();
+    let init = unsafe { *Box::from_raw((*args) as *mut Box<ThreadInit>) };
+    let slot = unsafe { *args.add(1) };
+    init.init()();
     unsafe {
         crate::sys::pal::tls::cleanup();
     }
-    // All user code, closure storage and TLS destructors have finished. Publish
-    // with release; join acquires it before reading the upstream result packet.
-    done.store(true, Release);
-    drop(done);
-    let id = unit::self_id().get();
-    {
-        let _guard = Registry::lock();
-        if let Some(slot) = TASKS.iter().find(|slot| slot.load(Relaxed) == id) {
-            slot.store(0, Release);
-        }
-    }
-    room::reap(0, VirtAddr::new(0), 0)
+    broker::completed(slot);
+    unit::exit(0, 0, VirtAddr::new(0), 0, ExitScope::Task)
 }
 
-// Serialize against publication, stop every other std-managed task, and wait
-// until it can no longer execute. No allocation, std lock, or TLS is used here.
-pub fn stop_other_threads() {
-    let me = unit::self_id().get();
-    if EXITING.compare_exchange(0, me, AcqRel, Acquire).is_err() {
-        loop {
-            yield_now();
-        }
-    }
-    let _guard = Registry::lock();
-    for slot in &TASKS {
-        let id = slot.load(Acquire);
-        if id == 0 || id == me {
-            continue;
-        }
-        let target = UnitTarget::Task(TaskId::new(id));
-        let _ = unit::slay(target);
-        while matches!(
-            unit::join(target, Wait::POLL, false),
-            Ok(JoinReply::Pending)
-        ) {
-            yield_now();
-        }
-    }
-}
 pub fn available_parallelism() -> io::Result<NonZero<usize>> {
     Err(io::Error::UNKNOWN_THREAD_COUNT)
 }
+
 pub fn current_os_id() -> Option<u64> {
-    Some(unit::self_id().get() as u64)
+    let UnitTarget::Task(task) = broker::inspect(UnitQuery::Caller)?.target else {
+        return None;
+    };
+    Some(task.get() as u64)
 }
+
 pub fn set_name(_: &CStr) {}
+
 pub fn yield_now() {
-    room::starve();
+    room::yield_();
 }
+
 pub fn sleep(duration: Duration) {
-    let start = crate::time::Instant::now();
-    while start.elapsed() < duration {
-        let remaining = duration.saturating_sub(start.elapsed());
-        let nanos = u64::try_from(remaining.as_nanos()).unwrap_or(u64::MAX);
-        let deadline = kernel_client::call::chrono::clock().saturating_add(nanos);
-        if room::park_until(deadline).is_err() {
-            yield_now();
+    if let kernel_api::model::wait::Wait::At(deadline) = room::deadline_after(duration) {
+        while let Err(error) = room::sleep_until(deadline) {
+            if error.source != kernel_api::abi::call::room::RoomFail::Busy {
+                crate::sys::abort_internal();
+            }
+            room::yield_();
         }
     }
 }

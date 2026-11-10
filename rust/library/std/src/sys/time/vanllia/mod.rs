@@ -3,7 +3,7 @@ use crate::time::Duration;
 pub struct Instant(Duration);
 impl Instant {
     pub fn now() -> Instant {
-        Instant(Duration::from_nanos(kernel_client::call::chrono::clock()))
+        Instant(Duration::from_nanos(kernel_client::call::room::clock()))
     }
 
     pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {

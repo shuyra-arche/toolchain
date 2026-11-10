@@ -1,6 +1,11 @@
 //! Vanllia process entry and termination.
+pub(crate) mod broker;
 pub(crate) mod tls;
-use kernel_api::model::{exit::EXIT_PANIC, identity::VirtAddr};
+use kernel_api::{
+    address::VirtAddr,
+    model::{exit::EXIT_PANIC, unit::ExitScope},
+};
+use kernel_client::call::unit;
 
 pub fn unsupported<T>() -> crate::io::Result<T> {
     Err(unsupported_err())
@@ -22,6 +27,14 @@ core::arch::global_asm!(
     "andi t0, sp, 15",
     "bnez t0, __shuyra_bad_entry",
     "tail __shuyra_start",
+    ".text",
+    ".global __shuyra_main_entry",
+    "__shuyra_main_entry:",
+    ".option push",
+    ".option norelax",
+    "la gp, __global_pointer$",
+    ".option pop",
+    "tail __shuyra_main",
 );
 
 #[unsafe(no_mangle)]
@@ -31,11 +44,18 @@ extern "C" fn __shuyra_bad_entry() -> ! {
 
 #[unsafe(no_mangle)]
 extern "C" fn __shuyra_start() -> ! {
-    let state = tls::State::new();
+    unsafe extern "C" {
+        fn __shuyra_main_entry();
+    }
+    broker::run(__shuyra_main_entry as *const () as usize)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn __shuyra_main() -> ! {
+    let state = tls::State::new(broker::notification());
     unsafe {
         state.install();
     }
-    crate::sys::thread::register_main();
     unsafe extern "C" {
         fn main(argc: isize, argv: *const *const u8) -> i32;
     }
@@ -54,19 +74,21 @@ pub fn finish(code: i32) -> ! {
     terminate(code, "toolchain: std process exit")
 }
 fn terminate(code: i32, note: &str) -> ! {
-    crate::sys::thread::stop_other_threads();
-    kernel_client::call::room::reap(
-        code as u32 as usize,
+    unit::exit(
+        u64::from(code as u32),
+        0,
         VirtAddr::new(note.as_ptr() as usize),
         note.len(),
+        ExitScope::Team,
     )
 }
 pub fn abort_internal() -> ! {
-    crate::sys::thread::stop_other_threads();
     let note = "toolchain: std abort";
-    kernel_client::call::room::reap(
-        EXIT_PANIC,
+    unit::exit(
+        0,
+        EXIT_PANIC as u64,
         VirtAddr::new(note.as_ptr() as usize),
         note.len(),
+        ExitScope::Team,
     )
 }

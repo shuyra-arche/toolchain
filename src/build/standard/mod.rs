@@ -16,6 +16,20 @@ pub fn invalidate(root: &Path) -> Result<()> {
 pub fn build(root: &Path, config: &source::Config) -> Result<()> {
     let compiler = source::verify(config)?;
     let stage = source::patch::prepare(root, config, &compiler)?;
+    let target_cache = root.join("build/std");
+    let cache_stamp = target_cache.join("prepared-dependencies");
+    // The relocated dependency paths are stable across preparations. Cargo
+    // can reuse a proc macro if a newly vendored source has an older mtime.
+    let stamp = format!("{}\n{}\n", compiler.commit, stage.dependencies_sha256);
+    if fs::read_to_string(&cache_stamp).ok().as_deref() != Some(&stamp) {
+        match fs::remove_dir_all(&target_cache) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        fs::create_dir_all(&target_cache)?;
+        fs::write(cache_stamp, stamp)?;
+    }
     let fixture = root.join("tests/target/std");
     let target = root
         .join("rust/targets")
@@ -53,12 +67,12 @@ pub fn build(root: &Path, config: &source::Config) -> Result<()> {
             .arg("--target")
             .arg(&target)
             .arg("--target-dir")
-            .arg(root.join("build/std"))
+            .arg(&target_cache)
             .args(["--bin", name, "--", "-C"])
             .arg(format!("link-arg=-T{}", fixture.join("link.ld").display()));
         println!("building std fixture: {name}");
         let messages = source::capture(&mut command)?;
-        let target_directory = root.join("build/std").join(&config.target);
+        let target_directory = target_cache.join(&config.target);
         for line in messages.lines() {
             let message: serde_json::Value = serde_json::from_str(line)?;
             if message["reason"] == "compiler-artifact"

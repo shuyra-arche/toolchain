@@ -1,5 +1,5 @@
 # Inputs vendored into the private std build, not an application package.
 [dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "65e89e1fd52e7fdf14e8ddcb65e75219a5684144" }
-kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "65e89e1fd52e7fdf14e8ddcb65e75219a5684144" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "602ee97b8a4a5bc924c369c079c19ed00954e4c0" }
 talc = { version = "5.1.1", default-features = false }
