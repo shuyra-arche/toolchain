@@ -71,7 +71,7 @@ so Cargo selects the prepared sources. It is a build workspace, not a distributi
 
 | Maintained input | Responsibility |
 | --- | --- |
-| `rust/library/std/src/sys/` | Canonical Vanllia allocator, startup/TLS, threads, waits, time and unsupported console backend as ordinary Rust files |
+| `rust/library/std/src/sys/` | Canonical Vanllia allocator, startup/TLS, threads, waits, time, backtrace and unsupported console backend as ordinary Rust files |
 | `rust/patches/upstream.patch` | Current upstream platform selection, dependency declarations and other integration edits |
 | `rust/patches/dependencies.patch` | Private dependency manifest adaptations for sysroot core/alloc and relocated Kernel packages |
 | `rust/dependencies.toml` / `.lock` | External input selection and locked Cargo resolution |
@@ -152,6 +152,14 @@ add fairness guarantees. `Instant`, sleep and timed waits use Kernel's monotonic
 The broker reserves completion slots for up to 1022 workers or unreleased
 JoinHandles. The Kernel counts the broker and main against the Team member limit.
 
+`std::backtrace::Backtrace::force_capture()` captures RV64 frame pointers on the
+Rust main thread and workers. The target keeps frame pointers enabled. The
+runtime obtains stack bounds from the Task entry argument block and the stack
+size requested by the broker. The walk stops at an invalid link or after 128
+frames. Display prints return addresses. To resolve a frame on the host, run
+`addr2line -f -C -e <matching-elf> <return-address-minus-one>` against the exact
+unstripped executable.
+
 Service-backed console/fs/net/process facilities, wall-clock SystemTime,
 unwinding and service argument translation are not implemented. Console reads
 and writes return Unsupported, and unavailable random generation fails explicitly.
@@ -178,6 +186,8 @@ not execute the programs. Outputs are under
 - `std-tls-main`: main TLS destructor execution, observed through intentional abort.
 - `std-thread-fault`: a Kernel illegal-instruction fault must abort join rather
   than hang or return normally.
+- `std-backtrace`: main and worker captures, with the worker's trace formatted
+  after it exits and both call chains resolved by the host probe.
 
 Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
 `tests/qemu/`. It checks these ELF hashes, validates their format through the

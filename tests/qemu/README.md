@@ -37,6 +37,8 @@ Run Toolchain's `build-std` command and use the same Kernel image as the startup
 probe. The QEMU test builds the no-std launcher with the
 `riscv64gc-unknown-none-elf` target. Install it with
 `rustup target add --toolchain nightly riscv64gc-unknown-none-elf`.
+The backtrace probe requires OpenSBI with the debug console extension (DBCN)
+and a host `addr2line` that reads RV64 ELF files.
 
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
@@ -55,7 +57,7 @@ all-tasks-exited shutdown.
 
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |
-| `toolchain-std`, `std-threads`, `std-waits` | `0` | `0` | `toolchain: std main returned` |
+| `toolchain-std`, `std-threads`, `std-waits`, `std-backtrace` | `0` | `0` | `toolchain: std main returned` |
 | `std-exit`, `std-thread-exit` | `23` | `0` | `toolchain: std process exit` |
 | `std-panic`, `std-oom`, `std-thread-panic`, `std-tls-main`, `std-thread-fault` | `0` | `0xffffff01` | `toolchain: std abort` |
 
@@ -78,8 +80,9 @@ and the Rust main Task on worker exit or panic. An illegal-instruction worker ch
 that join aborts when Kernel ends a task before Rust cleanup. The wait fixture checks Kernel queue counts, comparison mismatch, poll and timed
 expiry, invalid addresses, wake-one/broadcast, finite-timeout
 overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
-termination of a blocked detached worker. These are 20 QEMU
-runs in one opt-in test, not host emulation of the Kernel boundary.
+termination of a blocked detached worker. The backtrace probe resolves the
+main and worker call chains from the exact fixture ELF and records both
+symbolized traces. The opt-in test covers 22 QEMU runs.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned
