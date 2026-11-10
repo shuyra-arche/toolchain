@@ -172,8 +172,8 @@ fn kernel_revision() -> String {
 }
 
 #[test]
-#[ignore = "requires ABI v6 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v6() {
+#[ignore = "requires ABI v7 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v7() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
@@ -213,7 +213,7 @@ fn startup_abi_v6() {
         0,
         "toolchain: startup passed",
     );
-    let mut run = Run::new(Format::V6, receipt, &receipt_bytes, &kernel_revision);
+    let mut run = Run::new(Format::V7, receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
         run.boot(&probe, harts);
     }

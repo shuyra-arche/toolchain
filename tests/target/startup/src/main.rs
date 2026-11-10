@@ -1,7 +1,10 @@
 #![no_std]
 #![no_main]
 
-use kernel_api::{address::VirtAddr, model::exit::EXIT_PANIC};
+use kernel_api::{
+    address::VirtAddr,
+    model::{exit::EXIT_PANIC, unit::ExitScope},
+};
 
 // Kernel supplies a 16-byte-aligned stack and (argument words, word count) in
 // a0/a1. Capture the original SP before a Rust prologue changes it. There is
@@ -27,6 +30,7 @@ fn exit(reason: usize, note: &'static str) -> ! {
         reason as u64,
         VirtAddr::new(note.as_ptr() as usize),
         note.len(),
+        ExitScope::Task,
     )
 }
 

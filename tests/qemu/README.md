@@ -9,7 +9,7 @@ System's ELF loader, user-mode deployment or its lifecycle handshake.
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
 
-## ABI v6 startup
+## ABI v7 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
 `platform/riscv` at `eb37b0b0db299513274864cec23cee509a3cd3cc` (the integration
@@ -20,15 +20,16 @@ building the image. Use the resulting ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=9610a3e3e6a4c6d490fa83a408436aa637e2a577 \
+SHUYRA_KERNEL_REVISION=602ee97b8a4a5bc924c369c079c19ed00954e4c0 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu startup_abi_v6 -- --ignored --nocapture
+cargo +nightly test --locked --test qemu startup_abi_v7 -- --ignored --nocapture
 ```
 
-This probe validates the Capsule v2/ABI v6 initrd with Kernel API. The Kernel
+This probe validates the Capsule v2/ABI v7 initrd with Kernel API. The Kernel
 supplies the initial View and Ledger argument words, which the startup ELF
-reads through its pointer/count entry contract. The probe checks the number
+reads through its pointer/count entry contract before calling `Unit.Exit` with
+`ExitScope::Task`. The probe checks the number
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 

@@ -109,11 +109,11 @@ dependencies = [
 [[package]]
 name = "kernel-api"
 version = "0.0.1"
-source = "git+https://github.com/shuyra-arche/kernel.git?rev=9610a3e3e6a4c6d490fa83a408436aa637e2a577#9610a3e3e6a4c6d490fa83a408436aa637e2a577"
+source = "git+https://github.com/shuyra-arche/kernel.git?rev=602ee97b8a4a5bc924c369c079c19ed00954e4c0#602ee97b8a4a5bc924c369c079c19ed00954e4c0"
 dependencies = [
  "bitflags",
  "erra",
- "kernel-api-macros 0.0.1 (git+https://github.com/shuyra-arche/kernel.git?rev=9610a3e3e6a4c6d490fa83a408436aa637e2a577)",
+ "kernel-api-macros 0.0.1 (git+https://github.com/shuyra-arche/kernel.git?rev=602ee97b8a4a5bc924c369c079c19ed00954e4c0)",
 ]
 
 [[package]]
@@ -129,7 +129,7 @@ dependencies = [
 [[package]]
 name = "kernel-api-macros"
 version = "0.0.1"
-source = "git+https://github.com/shuyra-arche/kernel.git?rev=9610a3e3e6a4c6d490fa83a408436aa637e2a577#9610a3e3e6a4c6d490fa83a408436aa637e2a577"
+source = "git+https://github.com/shuyra-arche/kernel.git?rev=602ee97b8a4a5bc924c369c079c19ed00954e4c0#602ee97b8a4a5bc924c369c079c19ed00954e4c0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -234,7 +234,7 @@ name = "shuyra-toolchain"
 version = "0.1.0"
 dependencies = [
  "kernel-api 0.0.1 (git+https://github.com/shuyra-arche/kernel.git?rev=65e89e1fd52e7fdf14e8ddcb65e75219a5684144)",
- "kernel-api 0.0.1 (git+https://github.com/shuyra-arche/kernel.git?rev=9610a3e3e6a4c6d490fa83a408436aa637e2a577)",
+ "kernel-api 0.0.1 (git+https://github.com/shuyra-arche/kernel.git?rev=602ee97b8a4a5bc924c369c079c19ed00954e4c0)",
  "serde",
  "serde_json",
  "sha2",

@@ -1,11 +1,11 @@
 //! Encode only the ELF subset already accepted by the Toolchain inspect CLI.
 //! Kernel's public parser validates the resulting wire format before boot.
-use kernel_api_v6::boot::capsule::{HEADER, MAGIC, PAGE, RECORD};
+use kernel_api_v7::boot::capsule::{HEADER, MAGIC, PAGE, RECORD};
 
 #[derive(Clone, Copy)]
 pub enum Format {
     Legacy,
-    V6,
+    V7,
 }
 
 // These capsule generations use the same region and payload layout.
@@ -30,9 +30,9 @@ pub fn initrd(elf: &[u8], format: Format) -> Vec<u8> {
     out[..8].copy_from_slice(&MAGIC);
     let (version, abi) = match format {
         Format::Legacy => (1u16, 0),
-        Format::V6 => (
-            kernel_api_v6::boot::capsule::VERSION,
-            u8::try_from(kernel_api_v6::abi::VERSION).unwrap(),
+        Format::V7 => (
+            kernel_api_v7::boot::capsule::VERSION,
+            u8::try_from(kernel_api_v7::abi::VERSION).unwrap(),
         ),
     };
     out[8..10].copy_from_slice(&version.to_le_bytes());
@@ -100,8 +100,8 @@ pub fn initrd(elf: &[u8], format: Format) -> Vec<u8> {
     initrd.extend_from_slice(&out);
     let valid = match format {
         Format::Legacy => kernel_api::boot::capsule::Capsule::parse(&initrd[PAGE..]).is_some(),
-        Format::V6 => kernel_api_v6::boot::initrd::entry_image(&initrd)
-            .and_then(kernel_api_v6::boot::capsule::Capsule::parse)
+        Format::V7 => kernel_api_v7::boot::initrd::entry_image(&initrd)
+            .and_then(kernel_api_v7::boot::capsule::Capsule::parse)
             .is_some(),
     };
     assert!(valid, "Kernel rejected encoded capsule");
