@@ -36,7 +36,13 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client | [`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) |
+| Kernel API/Client (startup `build`) | [`9610a3e3e6a4c6d490fa83a408436aa637e2a577`](https://github.com/shuyra-arche/kernel/tree/9610a3e3e6a4c6d490fa83a408436aa637e2a577) — ABI v6 migration bootstrap |
+| Kernel API/Client (experimental `build-std` and QEMU suite) | [`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) — awaiting backend migration |
+
+The two targets currently use different Kernel ABI revisions. Do not combine the
+experimental `std` artifacts with the ABI v6 Kernel or treat the new startup
+artifact as proof of end-to-end System execution. Track the migration in
+[Issue #8](https://github.com/shuyra-arche/toolchain/issues/8).
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
 fingerprint of the installed Rust library source tree, hashes of fixture inputs,
@@ -185,8 +191,11 @@ The Toolchain suite does not depend on Vanllia or its build library.
 
 ## Executable contract
 
-The initial contract was checked against Kernel at the revision above and
+The original executable contract was checked against historical Kernel revision
+[`65e89e1fd52e7fdf14e8ddcb65e75219a5684144`](https://github.com/shuyra-arche/kernel/tree/65e89e1fd52e7fdf14e8ddcb65e75219a5684144) and
 [System Loader at `4177004`](https://github.com/shuyra-arche/system/blob/4177004b7f39c8e6458c158a5c4e0a4a71f48097/server/src/system/loader/image/elf.rs).
+The startup fixture is being migrated to Kernel ABI v6; static validation is not
+proof of current-Kernel execution.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
 - Separate readable RX, R and RW load segments with nonoverlapping 4 KiB pages.
@@ -195,8 +204,8 @@ The initial contract was checked against Kernel at the revision above and
   count in `a1`. The fixture initializes `gp`, preserves these arguments and
   never returns through an undefined caller address.
 - The fixture checks entry registers, argument readability, zero-filled BSS and
-  initialized writable data. It then calls Kernel Client `room::reap` with reason
-  zero and note `toolchain: startup passed`; failures use nonzero reasons.
+  initialized writable data. It then calls Kernel Client `unit::exit` with result
+  zero, reason zero and note `toolchain: startup passed`; failures report nonzero reasons.
   Kernel calls use the Client's `ebreak` transport, not an assumed Unix syscall.
 
 `inspect` validates this bootstrap subset and reports its SHA-256. It is a
