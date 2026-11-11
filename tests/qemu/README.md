@@ -7,7 +7,7 @@ probes. The assembled System Loader path is tracked in Vanllia.
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
 
-## ABI v7 startup
+## ABI v8 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
 `platform/riscv` at `eb37b0b0db299513274864cec23cee509a3cd3cc` (the integration
@@ -18,20 +18,20 @@ building the image. Use the resulting ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=fce8030f9e6dbccca869094721d032f3110891f5 \
+SHUYRA_KERNEL_REVISION=f8fc37207c909044e55c190a8af1b3e2435a377d \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu startup_abi_v7 -- --ignored --nocapture
+cargo +nightly test --locked --test qemu startup_abi_v8 -- --ignored --nocapture
 ```
 
-This probe validates the Capsule v2/ABI v7 initrd with Kernel API. The Kernel
+This probe validates the Capsule v2/ABI v8 initrd with Kernel API. The Kernel
 supplies the initial View and Ledger argument words, which the startup ELF
 reads through its pointer/count entry contract before calling `Unit.Exit` with
 `ExitScope::Task`. The probe checks the number
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
-## ABI v7 std backend
+## ABI v8 std backend
 
 Run Toolchain's `build-std` command and use the same Kernel image as the startup
 probe. The QEMU test builds the no-std launcher with the
@@ -43,7 +43,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=fce8030f9e6dbccca869094721d032f3110891f5 \
+SHUYRA_KERNEL_REVISION=f8fc37207c909044e55c190a8af1b3e2435a377d \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
@@ -58,7 +58,7 @@ all-tasks-exited shutdown.
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |
 | `toolchain-std`, `std-threads`, `std-waits`, `std-backtrace` | `0` | `0` | `toolchain: std main returned` |
-| `std-parallelism` | Hart count or `0` for unavailable | `0` | `toolchain: std main returned` |
+| `std-parallelism` | Hart count | `0` | `toolchain: std main returned` |
 | `std-exit`, `std-thread-exit` | `23` | `0` | `toolchain: std process exit` |
 | `std-panic`, `std-oom`, `std-thread-panic`, `std-tls-main`, `std-thread-fault` | `0` | `0xffffff01` | `toolchain: std abort` |
 
@@ -84,11 +84,6 @@ overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. The backtrace probe resolves the
 main and worker call chains from the exact fixture ELF and records both
 symbolized traces. The opt-in test covers 24 QEMU runs.
-
-To verify the `available_parallelism` fallback, run the same suite and std
-receipt with the pre-Inspect ABI v7 Kernel at
-`602ee97b8a4a5bc924c369c079c19ed00954e4c0` and its matching ELF. Only the
-parallelism fixture's expected exit value changes to zero.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned

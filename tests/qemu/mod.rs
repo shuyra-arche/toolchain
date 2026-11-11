@@ -201,8 +201,8 @@ fn kernel_revision() -> String {
 }
 
 #[test]
-#[ignore = "requires ABI v7 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v7() {
+#[ignore = "requires ABI v8 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v8() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
@@ -252,24 +252,18 @@ fn startup_abi_v7() {
 #[test]
 #[ignore = "requires Toolchain std receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
 fn std_main_allocator_and_termination() {
-    const PRE_INSPECT_KERNEL: &str = "602ee97b8a4a5bc924c369c079c19ed00954e4c0";
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
     let pin: toml::Value = toml::from_str(include_str!("../target/std/Cargo.toml")).unwrap();
     let pinned = pin["dependencies"]["kernel-api"]["rev"].as_str().unwrap();
-    assert!(
-        kernel_revision == pinned || kernel_revision == PRE_INSPECT_KERNEL,
-        "expected the pinned Kernel or the pre-Inspect ABI v7 reference"
+    assert_eq!(
+        kernel_revision, pinned,
+        "boot with the Kernel revision pinned by the std fixture"
     );
     let launcher = build_launcher();
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
-        let parallelism = if kernel_revision == pinned {
-            u64::from(harts)
-        } else {
-            0
-        };
         for (name, task, reason, value, note) in [
             ("toolchain-std", 3, 0, 0, "toolchain: std main returned"),
             ("std-exit", 3, 0, 23, "toolchain: std process exit"),
@@ -282,7 +276,7 @@ fn std_main_allocator_and_termination() {
                 "std-parallelism",
                 3,
                 0,
-                parallelism,
+                u64::from(harts),
                 "toolchain: std main returned",
             ),
             ("std-thread-exit", 4, 0, 23, "toolchain: std process exit"),
