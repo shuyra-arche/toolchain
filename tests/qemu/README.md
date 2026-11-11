@@ -7,7 +7,7 @@ probes. The assembled System Loader path is tracked in Vanllia.
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
 
-## ABI v8 startup
+## ABI v9 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
 `platform/riscv` at `eb37b0b0db299513274864cec23cee509a3cd3cc` (the integration
@@ -18,20 +18,20 @@ building the image. Use the resulting ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=f8fc37207c909044e55c190a8af1b3e2435a377d \
+SHUYRA_KERNEL_REVISION=23dec6b30e1ec08f42d3701e2613acd8c562c459 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu startup_abi_v8 -- --ignored --nocapture
+cargo +nightly test --locked --test qemu startup_abi_v9 -- --ignored --nocapture
 ```
 
-This probe validates the Capsule v2/ABI v8 initrd with Kernel API. The Kernel
+This probe validates the Capsule v2/ABI v9 initrd with Kernel API. The Kernel
 supplies the initial View and Ledger argument words, which the startup ELF
 reads through its pointer/count entry contract before calling `Unit.Exit` with
 `ExitScope::Task`. The probe checks the number
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
-## ABI v8 std backend
+## ABI v9 std backend
 
 Run Toolchain's `build-std` command and use the same Kernel image as the startup
 probe. The QEMU test builds the no-std launcher with the
@@ -43,7 +43,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=f8fc37207c909044e55c190a8af1b3e2435a377d \
+SHUYRA_KERNEL_REVISION=23dec6b30e1ec08f42d3701e2613acd8c562c459 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
@@ -53,7 +53,8 @@ cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- -
 two harts with a 20-second timeout. The launcher checks the retained Team and
 initiating Task results through `Unit.Inspect` and waits for Team retirement.
 The host verifies the admitted hart count, the Kernel exit records and
-all-tasks-exited shutdown.
+all-tasks-exited shutdown. The pinned ABI v9 Kernel reserves Task 2 for its
+memory observer, so the launcher expects broker 3, Rust main 4 and first worker 5.
 
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |

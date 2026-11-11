@@ -201,8 +201,8 @@ fn kernel_revision() -> String {
 }
 
 #[test]
-#[ignore = "requires ABI v8 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v8() {
+#[ignore = "requires ABI v9 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v9() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
@@ -264,25 +264,27 @@ fn std_main_allocator_and_termination() {
     let launcher = build_launcher();
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
     for harts in [1, 2] {
+        // The pinned Kernel's memory observer is Task 2. The launcher creates
+        // broker 3, Rust main 4 and the first Rust worker 5.
         for (name, task, reason, value, note) in [
-            ("toolchain-std", 3, 0, 0, "toolchain: std main returned"),
-            ("std-exit", 3, 0, 23, "toolchain: std process exit"),
-            ("std-panic", 3, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-oom", 3, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-threads", 3, 0, 0, "toolchain: std main returned"),
-            ("std-waits", 3, 0, 0, "toolchain: std main returned"),
-            ("std-backtrace", 3, 0, 0, "toolchain: std main returned"),
+            ("toolchain-std", 4, 0, 0, "toolchain: std main returned"),
+            ("std-exit", 4, 0, 23, "toolchain: std process exit"),
+            ("std-panic", 4, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-oom", 4, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-threads", 4, 0, 0, "toolchain: std main returned"),
+            ("std-waits", 4, 0, 0, "toolchain: std main returned"),
+            ("std-backtrace", 4, 0, 0, "toolchain: std main returned"),
             (
                 "std-parallelism",
-                3,
+                4,
                 0,
                 u64::from(harts),
                 "toolchain: std main returned",
             ),
-            ("std-thread-exit", 4, 0, 23, "toolchain: std process exit"),
-            ("std-thread-panic", 4, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-tls-main", 3, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-thread-fault", 3, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-thread-exit", 5, 0, 23, "toolchain: std process exit"),
+            ("std-thread-panic", 5, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-tls-main", 4, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-thread-fault", 4, 0xffffff01, 0, "toolchain: std abort"),
         ] {
             let artifact = &run.report["toolchain_receipt"]["artifacts"][name];
             let probe = Probe::new(

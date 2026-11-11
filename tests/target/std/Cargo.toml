@@ -62,8 +62,8 @@ test = false
 bench = false
 
 [dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "f8fc37207c909044e55c190a8af1b3e2435a377d" }
-kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "f8fc37207c909044e55c190a8af1b3e2435a377d" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "23dec6b30e1ec08f42d3701e2613acd8c562c459" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "23dec6b30e1ec08f42d3701e2613acd8c562c459" }
 
 [[bin]]
 name = "std-waits"

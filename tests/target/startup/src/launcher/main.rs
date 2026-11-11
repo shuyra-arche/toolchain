@@ -14,8 +14,8 @@ use kernel_api::{
     },
     model::{
         cell::{
-            Allocation, CellCreate, CellHandoff, CellInfo, CellObject, CellPosition, CellSource,
-            CreatedCell, MappingControl, MappingTarget, MemoDestination, Placement, ReferenceRange,
+            Allocation, CellAssociation, CellCreate, CellInfo, CellObject, CellPosition,
+            CellSource, CreatedCell, MemoDestination, Placement, ReferenceRange,
         },
         identity::{Mark, PendId, TaskId, TeamId},
         modifiable::Modifiable,
@@ -89,21 +89,14 @@ fn memo(
             team,
             placement,
             access,
-            control: MappingControl::Caller,
         },
     }
     .to_bytes();
-    let CreatedCell::Memo { mapping, address } = cell::create(PendId::NONE, at(&spec)).unwrap()
+    let CreatedCell::Memo { token, address } = cell::create(PendId::NONE, at(&spec)).unwrap()
     else {
         panic!("expected Memo");
     };
-    (
-        CellObject::Memo {
-            target: MappingTarget::Cpu(team),
-            mapping,
-        },
-        address,
-    )
+    (CellObject::Memo(token), address)
 }
 
 fn publish(object: CellObject, pages: usize) {
@@ -128,7 +121,7 @@ fn stage(license: PendId, bytes: &[u8], pages: usize, modifiable: Modifiable) ->
         6,
     );
     for page in 0..pages {
-        cell::push(at(&CellHandoff {
+        cell::insert(at(&CellAssociation {
             source: CellPosition {
                 object: CellObject::Slot(slot),
                 page,
