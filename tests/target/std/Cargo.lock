@@ -17,7 +17,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 [[package]]
 name = "kernel-api"
 version = "0.0.1"
-source = "git+https://github.com/shuyra-arche/kernel.git?rev=f8fc37207c909044e55c190a8af1b3e2435a377d#f8fc37207c909044e55c190a8af1b3e2435a377d"
+source = "git+https://github.com/shuyra-arche/kernel.git?rev=23dec6b30e1ec08f42d3701e2613acd8c562c459#23dec6b30e1ec08f42d3701e2613acd8c562c459"
 dependencies = [
  "bitflags",
  "erra",
@@ -27,7 +27,7 @@ dependencies = [
 [[package]]
 name = "kernel-api-macros"
 version = "0.0.1"
-source = "git+https://github.com/shuyra-arche/kernel.git?rev=f8fc37207c909044e55c190a8af1b3e2435a377d#f8fc37207c909044e55c190a8af1b3e2435a377d"
+source = "git+https://github.com/shuyra-arche/kernel.git?rev=23dec6b30e1ec08f42d3701e2613acd8c562c459#23dec6b30e1ec08f42d3701e2613acd8c562c459"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -37,7 +37,7 @@ dependencies = [
 [[package]]
 name = "kernel-client"
 version = "0.0.1"
-source = "git+https://github.com/shuyra-arche/kernel.git?rev=f8fc37207c909044e55c190a8af1b3e2435a377d#f8fc37207c909044e55c190a8af1b3e2435a377d"
+source = "git+https://github.com/shuyra-arche/kernel.git?rev=23dec6b30e1ec08f42d3701e2613acd8c562c459#23dec6b30e1ec08f42d3701e2613acd8c562c459"
 dependencies = [
  "erra",
  "kernel-api",

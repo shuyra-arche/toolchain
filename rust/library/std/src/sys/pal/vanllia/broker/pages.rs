@@ -5,9 +5,8 @@ use kernel_api::{
     address::{PAGE_SIZE, VirtAddr},
     model::{
         cell::{
-            Allocation, CellCreate, CellHandoff, CellInfo, CellObject, CellPosition, CellSource,
-            CellState, CreatedCell, MappingControl, MappingTarget, MemoDestination, Placement,
-            ReferenceRange,
+            Allocation, CellAssociation, CellCreate, CellInfo, CellObject, CellPosition,
+            CellSource, CellState, CreatedCell, MemoDestination, Placement, ReferenceRange,
         },
         identity::{PendId, TeamId},
     },
@@ -55,20 +54,13 @@ pub(super) fn allocate(license: PendId, size: usize, align: usize) -> usize {
             team: TEAM,
             placement,
             access: 6,
-            control: MappingControl::Caller,
         },
     }
     .to_bytes();
     let (memo, base) = loop {
         match cell::create(PendId::NONE, address(&descriptor)) {
-            Ok(CreatedCell::Memo { mapping, address }) => {
-                break (
-                    CellObject::Memo {
-                        target: MappingTarget::Cpu(TEAM),
-                        mapping,
-                    },
-                    address,
-                );
+            Ok(CreatedCell::Memo { token, address }) => {
+                break (CellObject::Memo(token), address);
             }
             Err(e) if e.source == CellFail::Busy => room::yield_(),
             _ => {
@@ -119,8 +111,8 @@ fn publish(memo: CellObject, page: usize, slot: CellObject) -> Result<(), CellFa
     loop {
         let (state, target) = inspect(memo, page)?;
         let result = match state {
-            CellState::Vacant => cell::push(address(
-                &CellHandoff {
+            CellState::Vacant => cell::insert(address(
+                &CellAssociation {
                     source: CellPosition {
                         object: slot,
                         page,

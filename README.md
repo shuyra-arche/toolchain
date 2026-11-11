@@ -36,9 +36,14 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`f8fc37207c909044e55c190a8af1b3e2435a377d`](https://github.com/shuyra-arche/kernel/tree/f8fc37207c909044e55c190a8af1b3e2435a377d) — ABI v8 |
+| Kernel API/Client (startup, std and QEMU) | [`23dec6b30e1ec08f42d3701e2613acd8c562c459`](https://github.com/shuyra-arche/kernel/tree/23dec6b30e1ec08f42d3701e2613acd8c562c459) — ABI v9 |
 
 Use the matching Kernel and Capsule v2 for both targets.
+
+ABI v9 mapping control uses the Memo Pend returned by Cell Create. The broker
+and launcher insert Page associations with Cell Insert, then publish them.
+They retain the Memo authority until withdrawal and deletion finish. Slot
+ownership transfers use the separate Push/Pull contract.
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
 fingerprint of the installed Rust library source tree, hashes of fixture inputs,
@@ -207,7 +212,7 @@ artifact-handoff tests.
 
 ## Executable contract
 
-The ABI v8 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v8-startup)
+The ABI v9 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v9-startup)
 that boots Capsule v2 and checks Kernel termination on one and two harts.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
