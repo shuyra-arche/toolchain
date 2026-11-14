@@ -91,7 +91,11 @@ fn terminate(code: i32, note: &str) -> ! {
     )
 }
 pub fn abort_internal() -> ! {
-    let note = "toolchain: std abort";
+    abort_memory("toolchain: std abort")
+}
+// The broker has no Rust TLS. Report internal failures directly through Kernel
+// instead of entering std's TLS-dependent panic machinery.
+pub(crate) fn abort_memory(note: &'static str) -> ! {
     unit::exit(
         0,
         EXIT_PANIC as u64,

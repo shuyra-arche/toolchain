@@ -3,6 +3,7 @@
 
 use kernel_api::{
     address::VirtAddr,
+    boot::{args, ledger::Entries},
     model::{exit::EXIT_PANIC, unit::ExitScope},
 };
 
@@ -39,8 +40,7 @@ extern "C" fn startup(args: usize, count: usize, stack: usize) -> ! {
     if stack == 0 || stack & 15 != 0 || args < stack || args - stack >= 16 || args & 7 != 0 {
         exit(1, "toolchain: invalid entry registers");
     }
-    // A test runner may supply arbitrary words. Read each one to exercise the
-    // pointer/count contract without imposing a System-owned argument format.
+    // Read the argument words before checking Kernel's initial Task contract.
     if count > 4096 || args.checked_add(count * 8).is_none() {
         exit(2, "toolchain: invalid argument range");
     }
@@ -48,6 +48,16 @@ extern "C" fn startup(args: usize, count: usize, stack: usize) -> ! {
         unsafe {
             core::ptr::read_volatile((args as *const usize).add(i));
         }
+    }
+    if count != args::LEN {
+        exit(6, "toolchain: invalid Kernel arguments");
+    }
+    let words = unsafe { core::slice::from_raw_parts(args as *const usize, count) };
+    let ledger = unsafe {
+        core::slice::from_raw_parts(words[args::LEDGER] as *const u8, words[args::LEDGER_LEN])
+    };
+    if Entries::new(ledger).is_none() {
+        exit(7, "toolchain: invalid Kernel Ledger");
     }
     for i in 0..4096 {
         if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(ZERO).cast::<u8>().add(i)) } != 0 {

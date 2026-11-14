@@ -4,36 +4,41 @@
 //! Direct-Kernel test loader for a std ELF in a child Team.
 use core::{fmt::Write, slice};
 use kernel_api::{
-    abi::call::sign::SignReply,
-    address::{PAGE_SIZE, VirtAddr},
+    abi::{
+        call::sign::SignReply,
+        memory::{Action, Query, Snapshot, Source, Value},
+    },
+    address::{PAGE_SIZE, PageCount, VirtAddr},
     boot::{
         args,
         capsule::{Capsule, Region},
         initrd,
-        ledger::{Call, Entries, Name, Page},
+        ledger::{Call, Entries, Name},
     },
     model::{
-        cell::{
-            Allocation, CellAssociation, CellCreate, CellInfo, CellObject, CellPosition,
-            CellSource, CreatedCell, MemoDestination, Placement, ReferenceRange,
-        },
+        cell::{CellLevel, Placement},
+        flat::SlotPosition,
         identity::{Mark, PendId, TaskId, TeamId},
         modifiable::Modifiable,
+        nest::{MemoPosition, ReserveRequest},
         pend::{
-            AccordRequest, AccordTarget, CreationRights, Distributable, Limits, Operations,
-            PendInfo, PendRange, ShareRights,
+            AccordRequest, AccordTarget, CreationRights, Distributable, Limits, NestRights,
+            NestScope, Operations, PendInfo, PendRange, PendScope, ShareRights, Target, ViewTarget,
         },
         sign::SignSource,
         unit::{
-            ControlId, ExitCause, ExitScope, ProgramKind, UnitCreate, UnitInfo, UnitQuery,
+            ControlId, CreatedUnit, ExitCause, ExitScope, UnitCreate, UnitInfo, UnitQuery,
             UnitState, UnitTarget,
         },
         wait::Wait,
     },
 };
-use kernel_client::call::{cell, pend, room, share_view, sign, unit};
+use kernel_client::call::{pend, room, share_view, sign, unit};
 
-const OWN: TeamId = TeamId::new(0);
+// Exercise the maintained request settlement path in the real launcher Tasks.
+#[path = "../../../../../rust/library/std/src/sys/pal/vanllia/broker/memory.rs"]
+mod memory;
+use memory::Memory;
 
 core::arch::global_asm!(
     ".section .text.entry,\"ax\"",
@@ -44,123 +49,221 @@ core::arch::global_asm!(
     "la gp, __global_pointer$",
     ".option pop",
     "tail launch",
-    ".text",
-    ".global child_entry",
-    "child_entry:",
-    ".option push",
-    ".option norelax",
-    "la gp, __global_pointer$",
-    ".option pop",
-    "tail enter",
 );
-unsafe extern "C" {
-    fn child_entry();
-}
 
 fn at<T>(value: &T) -> VirtAddr {
     VirtAddr::new(value as *const T as usize)
 }
 
-fn position(object: CellObject, page: usize) -> CellPosition {
-    let mut pos = CellPosition {
-        object,
-        page,
-        generation: 0,
-    };
-    let mut info = [0u8; CellInfo::WIDTH];
-    cell::inspect(
-        at(&pos.to_bytes()),
-        VirtAddr::new(info.as_mut_ptr() as usize),
-    )
-    .unwrap();
-    pos.generation = CellInfo::from_bytes(&info).unwrap().generation;
-    pos
+fn memory_failure(message: &'static str) -> ! {
+    panic!("{message}")
 }
 
-fn memo(
-    source: CellSource,
-    team: TeamId,
+fn pend_info(token: PendId) -> PendInfo {
+    let mut bytes = [0; PendInfo::SIZE];
+    pend::inspect(token, VirtAddr::new(bytes.as_mut_ptr() as usize)).unwrap();
+    PendInfo::from_bytes(&bytes).unwrap()
+}
+
+fn reserve(
+    memory: &mut Memory,
+    space: PendId,
     placement: Placement,
+    count: usize,
     access: u64,
-) -> (CellObject, VirtAddr) {
-    let spec = CellCreate::Memo {
-        source,
-        destination: MemoDestination::Internal {
-            team,
-            placement,
-            access,
-        },
-    }
-    .to_bytes();
-    let CreatedCell::Memo { token, address } = cell::create(PendId::NONE, at(&spec)).unwrap()
+) -> (MemoPosition, VirtAddr) {
+    let Target::Nest(nest) = pend_info(space).target else {
+        panic!("expected Nest")
+    };
+    let Snapshot::Nest(status) = memory.inspect(Query::Nest { token: space, nest }) else {
+        panic!("expected Nest")
+    };
+    let Value::Reservation {
+        token,
+        reservation,
+        address,
+        ..
+    } = memory
+        .mutate(Action::Reserve {
+            token: space,
+            nest,
+            expected: status.version,
+            reservation: ReserveRequest {
+                placement,
+                count: PageCount::new(count).unwrap(),
+                level: CellLevel::new(0).unwrap(),
+                access,
+            },
+        })
+        .unwrap()
     else {
-        panic!("expected Memo");
+        panic!("expected Reservation")
     };
-    (CellObject::Memo(token), address)
+    (
+        MemoPosition::new(token, nest, reservation, 0).unwrap(),
+        address,
+    )
 }
 
-fn publish(object: CellObject, pages: usize) {
-    for page in 0..pages {
-        cell::publish(at(&position(object, page).to_bytes())).unwrap();
-    }
+fn generation(memory: &Memory, memo: MemoPosition) -> kernel_api::model::nest::MemoGeneration {
+    let Snapshot::Memo(status) = memory.inspect(Query::Memo(memo)) else {
+        panic!("expected Memo")
+    };
+    status.generation
 }
 
-fn stage(license: PendId, bytes: &[u8], pages: usize, modifiable: Modifiable) -> PendId {
-    let spec = CellCreate::Slot(Allocation::new(pages * PAGE_SIZE, PAGE_SIZE).unwrap()).to_bytes();
-    let CreatedCell::Slot(slot) = cell::create(license, at(&spec)).unwrap() else {
-        panic!("expected Slot");
-    };
-    let (object, address) = memo(
-        CellSource::Slot(ReferenceRange {
-            reference: slot,
-            offset: 0,
+fn associate(memory: &mut Memory, first: MemoPosition, page: usize, source: Source) {
+    let target = MemoPosition::new(first.token(), first.nest(), first.reservation(), page).unwrap();
+    memory
+        .mutate(Action::Insert {
+            target,
+            expected: generation(memory, target),
+            source,
+        })
+        .unwrap();
+    memory
+        .mutate(Action::Publish {
+            memo: target,
+            expected: generation(memory, target),
+            maintenance: None,
+        })
+        .unwrap();
+}
+
+fn stage(
+    memory: &mut Memory,
+    license: PendId,
+    space: PendId,
+    bytes: &[u8],
+    pages: usize,
+    modifiable: Modifiable,
+) -> PendId {
+    let Value::CreatedFlat { token, flat, .. } = memory
+        .mutate(Action::CreateFlat {
+            license,
             count: pages,
-        }),
-        OWN,
+            level: CellLevel::new(0).unwrap(),
+        })
+        .unwrap()
+    else {
+        panic!("expected Flat")
+    };
+    let (memo, base) = reserve(
+        memory,
+        space,
         Placement::lowest(PAGE_SIZE).unwrap(),
+        pages,
         6,
     );
     for page in 0..pages {
-        cell::insert(at(&CellAssociation {
-            source: CellPosition {
-                object: CellObject::Slot(slot),
-                page,
-                generation: 0,
+        let position = SlotPosition::new(token, flat, page).unwrap();
+        let Snapshot::Slot(status) = memory.inspect(Query::Slot(position)) else {
+            panic!("expected Slot")
+        };
+        let Value::Slot { version, .. } = memory
+            .mutate(Action::Occupy {
+                slot: position,
+                expected: status.version,
+            })
+            .unwrap()
+        else {
+            panic!("expected Slot")
+        };
+        associate(
+            memory,
+            memo,
+            page,
+            Source::Flat {
+                position,
+                expected: version,
             },
-            target: position(object, page),
-        }
-        .to_bytes()))
-        .unwrap();
+        );
     }
-    publish(object, pages);
     unsafe {
-        slice::from_raw_parts_mut(address.get() as *mut u8, bytes.len()).copy_from_slice(bytes);
+        slice::from_raw_parts_mut(base.get() as *mut u8, bytes.len()).copy_from_slice(bytes);
     }
     for page in 0..pages {
-        cell::retract(at(&position(object, page).to_bytes())).unwrap();
+        let target =
+            MemoPosition::new(memo.token(), memo.nest(), memo.reservation(), page).unwrap();
+        memory
+            .mutate(Action::Retract {
+                memo: target,
+                expected: generation(memory, target),
+            })
+            .unwrap();
+        memory
+            .mutate(Action::Remove {
+                memo: target,
+                expected: generation(memory, target),
+            })
+            .unwrap();
     }
-    cell::delete(at(&object.to_bytes())).unwrap();
-    let source = share_view::create(license, slot, modifiable).unwrap();
-    cell::delete(at(&CellObject::Slot(slot).to_bytes())).unwrap();
-    source
+    let Snapshot::Reservation(status) = memory.inspect(Query::Reservation {
+        token: memo.token(),
+        nest: memo.nest(),
+        reservation: memo.reservation(),
+    }) else {
+        panic!("expected Reservation")
+    };
+    memory
+        .mutate(Action::Release {
+            token: memo.token(),
+            nest: memo.nest(),
+            reservation: memo.reservation(),
+            expected: status.version,
+        })
+        .unwrap();
+    let spec = AccordRequest {
+        src: token,
+        target: AccordTarget::Caller,
+        mark: Mark::NONE,
+        limits: Limits {
+            operations: Operations::Share(ShareRights::ASSOCIATE),
+            modifiable,
+            distributable: Distributable::Yes,
+            scope: PendScope::Pages(PendRange::Inherit),
+        },
+    }
+    .to_bytes();
+    // Keep the source Flat live through all child publications. Parent Task
+    // teardown releases these fixture sources after the User Team has retired.
+    share_view::derive(license, at(&spec)).unwrap()
 }
 
-fn map(token: PendId, team: TeamId, region: Region) {
-    let (object, address) = memo(
-        CellSource::Pend {
-            token,
-            offset: 0,
-            count: region.pages,
-        },
-        team,
+fn map(memory: &mut Memory, token: PendId, space: PendId, region: Region) {
+    let Target::View(ViewTarget::Share(view)) = pend_info(token).target else {
+        panic!("expected Share")
+    };
+    let (memo, address) = reserve(
+        memory,
+        space,
         Placement::exact(VirtAddr::new(region.va), PAGE_SIZE).unwrap(),
+        region.pages,
         region.flags,
     );
     assert_eq!(address.get(), region.va);
-    publish(object, region.pages);
+    for page in 0..region.pages {
+        associate(
+            memory,
+            memo,
+            page,
+            Source::Share {
+                token,
+                view,
+                page,
+                count: 1,
+            },
+        );
+    }
 }
 
-fn delegate(source: PendId, task: TaskId, operations: Operations, modifiable: Modifiable) {
+fn delegate(
+    source: PendId,
+    task: TaskId,
+    operations: Operations,
+    modifiable: Modifiable,
+    scope: PendScope,
+) {
     let request = AccordRequest {
         src: source,
         target: AccordTarget::Task(task),
@@ -169,7 +272,7 @@ fn delegate(source: PendId, task: TaskId, operations: Operations, modifiable: Mo
             operations,
             modifiable,
             distributable: Distributable::No,
-            range: PendRange::Inherit,
+            scope,
         },
     }
     .to_bytes();
@@ -183,9 +286,10 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
         unsafe { slice::from_raw_parts(words[args::LEDGER] as *const u8, words[args::LEDGER_LEN]) };
     let entries = Entries::new(ledger).unwrap();
     let license = PendId::mint(entries.find(Name::Call(Call::Create)).unwrap().handle());
-    let initrd_token = PendId::mint(entries.find(Name::Page(Page::Initrd)).unwrap().handle());
-    let (base, size) = share_view::open(initrd_token).unwrap();
-    let bytes = unsafe { slice::from_raw_parts(base.get() as *const u8, size) };
+    let space = PendId::mint(entries.find(Name::Space).unwrap().handle());
+    let mut memory = Memory::new(memory_failure);
+    let bytes =
+        unsafe { slice::from_raw_parts(words[args::VIEW] as *const u8, words[args::VIEW_LEN]) };
     let loader = initrd::entry_image(bytes).unwrap();
     let offset = loader.as_ptr().addr() - bytes.as_ptr().addr() + loader.len();
     let word = |at: usize| usize::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
@@ -194,70 +298,62 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
     let program = &bytes[offset + 32..offset + 32 + word(offset + 24)];
 
     let spec = UnitCreate::Team {
-        kind: ProgramKind::User,
         guard: ControlId::NONE,
         nest: None,
         member_exit: true,
     }
     .to_bytes();
-    let UnitTarget::Team(team) = unit::create(at(&spec)).unwrap() else {
+    let CreatedUnit::Team {
+        team,
+        nest: child_space,
+    } = unit::create(at(&spec)).unwrap()
+    else {
         panic!("expected Team")
     };
-    let mut writable = None;
-    for (image, is_program) in [(loader, false), (program, true)] {
-        let image_regions = Capsule::parse(image).unwrap();
-        for index in 0..image_regions.count {
-            let region = image_regions.region(index).unwrap();
-            let writes = region.flags & 4 != 0;
-            if writes && !is_program {
-                continue;
-            }
-            let data = &image[region.payload..region.payload + region.data_pages * PAGE_SIZE];
-            let source = stage(
-                license,
-                data,
-                region.pages,
-                if writes {
-                    Modifiable::Yes
-                } else {
-                    Modifiable::No
-                },
-            );
-            if writes {
-                assert!(
-                    writable.replace((source, region)).is_none(),
-                    "one writable segment"
-                );
+    let image = Capsule::parse(program).unwrap();
+    for index in 0..image.count {
+        let region = image.region(index).unwrap();
+        let data = &program[region.payload..region.payload + region.data_pages * PAGE_SIZE];
+        let source = stage(
+            &mut memory,
+            license,
+            space,
+            data,
+            region.pages,
+            if region.flags & 4 != 0 {
+                Modifiable::Yes
             } else {
-                map(source, team, region);
-            }
-        }
+                Modifiable::No
+            },
+        );
+        map(&mut memory, source, child_space, region);
     }
-    let (data, region) = writable.unwrap();
-    let entry = Capsule::parse(program).unwrap().entry;
-    let child_args = [entry, region.va, region.pages];
+    // The creator's Whole-Nest grant prepares the complete image. The child
+    // starts directly at its ELF entry and has not consumed any RequestIds.
     let child = UnitCreate::Task {
         team: Some(team),
-        entry: VirtAddr::new(child_entry as *const () as usize),
-        args: at(&child_args),
-        count: child_args.len() as u64,
+        entry: VirtAddr::new(image.entry),
+        args: VirtAddr::new(0),
+        count: 0,
         stack: VirtAddr::new(0),
     }
     .to_bytes();
-    let UnitTarget::Task(task) = unit::create(at(&child)).unwrap() else {
+    let CreatedUnit::Task(task) = unit::create(at(&child)).unwrap() else {
         panic!("expected Task")
     };
-    delegate(
-        data,
-        task,
-        Operations::Share(ShareRights::ASSOCIATE),
-        Modifiable::Yes,
-    );
     delegate(
         license,
         task,
         Operations::None(CreationRights::FLAT | CreationRights::SIGN),
         Modifiable::No,
+        PendScope::Object,
+    );
+    delegate(
+        child_space,
+        task,
+        Operations::Nest(NestRights::INSPECT | NestRights::RESERVE),
+        Modifiable::Yes,
+        PendScope::Nest(NestScope::Whole),
     );
     let endpoint = sign::create(license).unwrap();
     let target = UnitTarget::Team(team);
@@ -318,38 +414,6 @@ fn release_receipts(team: TeamId, keep: TaskId) {
             unit::delete(info.target).unwrap();
         }
     }
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn enter(words: *const usize, count: usize) -> ! {
-    assert_eq!(count, 3);
-    let words = unsafe { slice::from_raw_parts(words, count) };
-    let mut after = PendId::NONE;
-    let source = loop {
-        let mut info = [0u8; PendInfo::SIZE];
-        assert_eq!(
-            pend::collect(after, VirtAddr::new(info.as_mut_ptr() as usize), 1).unwrap(),
-            1
-        );
-        let info = PendInfo::from_bytes(&info).unwrap();
-        if info.limits.operations == Operations::Share(ShareRights::ASSOCIATE) {
-            break info.token;
-        }
-        after = info.token;
-    };
-    map(
-        source,
-        OWN,
-        Region {
-            va: words[1],
-            pages: words[2],
-            data_pages: 0,
-            payload: 0,
-            flags: 6,
-        },
-    );
-    let start: extern "C" fn(usize, usize) -> ! = unsafe { core::mem::transmute(words[0]) };
-    start(0, 0)
 }
 
 fn finish(reason: u64, note: &str) -> ! {

@@ -62,7 +62,7 @@ fn main() -> Completed {
         );
         System.dealloc(p, Layout::from_size_align(17000, layout.align()).unwrap());
         // This fits Layout and allocator arithmetic, but exceeds Kernel's
-        // RV64 address-space window. Exercise Attach refusal and source rollback.
+        // RV64 address-space window. Exercise native allocation refusal and rollback.
         let unmappable = Layout::from_size_align(1usize << 60, 4096).unwrap();
         for _ in 0..8 {
             assert!(System.alloc(unmappable).is_null());
