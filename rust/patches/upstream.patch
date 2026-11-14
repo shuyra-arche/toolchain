@@ -94,8 +94,8 @@ diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
 +
 +[target.'cfg(target_os = "vanllia")'.dependencies]
 +talc = { version = "5.1.1", default-features = false }
-+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", tag = "26.11.14-preview-Gamma" }
-+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", tag = "26.11.14-preview-Gamma" }
++kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "b2eb37e2af134e4bb4248df454c437b06c1f93c0" }
++kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "b2eb37e2af134e4bb4248df454c437b06c1f93c0" }
 diff --git a/library/std/build.rs b/library/std/build.rs
 --- a/library/std/build.rs
 +++ b/library/std/build.rs

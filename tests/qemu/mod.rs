@@ -277,7 +277,7 @@ fn std_main_allocator_and_termination() {
     );
     let launcher = build_launcher();
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
-    // Gamma qualifies native publication/retirement only on one Hart.
+    // Delta qualifies native publication/retirement only on one Hart.
     for harts in [1] {
         // The pinned Kernel's memory observer is Task 2. The launcher creates
         // broker 3, Rust main 4 and the first Rust worker 5.

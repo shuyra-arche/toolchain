@@ -10,16 +10,13 @@ SHA-256. The suite never downloads or substitutes these inputs.
 ## ABI v11 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
-`platform/riscv` at `dd32c35dbb67e2e78edb00ad35f968d16423249e` (the
-platform source used by Gamma's native acceptance), with both `kernel` and
-`kernel-api` resolved
-to the startup fixture's Kernel tag `26.11.14-preview-Gamma`. In a dedicated
-integration checkout, replace the platform's historical `rev` selection and
-remove `features = ["memory-v11"]` from both dependencies. Refresh its lockfile
-before building the image:
+`platform/riscv` at `b5468739f2d7e36d64198de743a13d6ccabc6666`. This verified
+integration revision already selects the startup fixture's exact Kernel
+`rev = "b2eb37e2af134e4bb4248df454c437b06c1f93c0"`, published as
+`26.11.14-preview-Delta`, without an ABI feature. Use a dedicated integration
+checkout and its committed lockfile:
 
 ```sh
-cargo +nightly update --manifest-path platform/riscv/Cargo.toml -p kernel
 cargo +nightly build --locked --release --target riscv64gc-unknown-none-elf \
   --manifest-path platform/riscv/Cargo.toml
 ```
@@ -29,7 +26,7 @@ Use the resulting normal platform ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=9a35dd5420474ebe75a6b5f3e4589a398745e32c \
+SHUYRA_KERNEL_REVISION=b2eb37e2af134e4bb4248df454c437b06c1f93c0 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu startup_abi_v11 -- --ignored --nocapture
@@ -44,11 +41,11 @@ and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
 ## ABI v11 std backend
 
-Run Toolchain's `build-std` command. Gamma's native memory backend requires
+Run Toolchain's `build-std` command. Delta's native memory backend requires
 trusted RAM qualification and rejects qualification with more than one Hart.
 The normal startup image does not install those facts. Use the test-only
 [`platform.rs`](platform.rs) entry with the same dedicated Vanllia checkout and
-Gamma tag selection described above:
+exact Delta revision selection described above:
 
 ```sh
 cp /absolute/toolchain/tests/qemu/platform.rs platform/riscv/src/main.rs
@@ -71,7 +68,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=9a35dd5420474ebe75a6b5f3e4589a398745e32c \
+SHUYRA_KERNEL_REVISION=b2eb37e2af134e4bb4248df454c437b06c1f93c0 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
@@ -113,7 +110,7 @@ overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. The backtrace probe resolves the
 main and worker call chains from the exact fixture ELF and records both
 symbolized traces. The std test covers 12 QEMU runs; startup adds two.
-Two-Hart std execution is unsupported by Gamma's native memory provider and is not claimed as verified.
+Two-Hart std execution is unsupported by Delta's native memory provider and is not claimed as verified.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned

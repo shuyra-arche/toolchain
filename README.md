@@ -36,7 +36,12 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`26.11.14-preview-Gamma`](https://github.com/shuyra-arche/kernel/releases/tag/26.11.14-preview-Gamma) — ABI/Ledger v11; lockfiles resolve `9a35dd5420474ebe75a6b5f3e4589a398745e32c` |
+| Kernel API/Client (startup, std and QEMU) | [`26.11.14-preview-Delta`](https://github.com/shuyra-arche/kernel/releases/tag/26.11.14-preview-Delta) — ABI/Ledger v11; lockfiles resolve `b2eb37e2af134e4bb4248df454c437b06c1f93c0` |
+
+All Kernel manifests use that full `rev`, matching Vanllia's Cargo Git source
+identity. Delta identifies the release; the composition does not mix `tag` and
+`rev` dependencies. Delta includes Kernel #175's native Nest creation lock fix;
+ABI/Ledger stay 11/11 and Capsule format stays 2.
 
 Use the matching Kernel and Capsule v2 for both targets.
 
@@ -46,7 +51,7 @@ Publish, Retract, Remove and Release, and deletes the Flat only after retirement
 Pending operations and delivery failures are resolved with the original
 RequestId; only explicitly rejected Busy/Stale requests can be retried.
 
-Gamma requires a trusted, qualified RAM topology for native publication and
+Delta requires a trusted, qualified RAM topology for native publication and
 retirement, currently on a single Hart. The [QEMU instructions](tests/qemu/README.md)
 provide a bounded test platform for this contract. Rebuild the Kernel image,
 Capsule, Ledger and all consumers together; old Cell and Share Open/Shut calls
@@ -210,7 +215,7 @@ Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
 public inspect CLI, and encodes the Kernel boot capsule using Kernel API's public
 format and parser. The native QEMU child has a bounded timeout and captured logs.
 The test requires matching Kernel exit records and all-tasks-exited shutdown.
-Startup runs on one and two Harts; Gamma std runs on one qualified Hart.
+Startup runs on one and two Harts; Delta std runs on one qualified Hart.
 Evidence is stored under `target/qemu/<run>/`, separately from the build receipt.
 
 The startup fixture boots as Kernel's initial supervisor Task. A test launcher
@@ -263,7 +268,7 @@ minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
 Assembled execution still needs a compatible Toolchain artifact handoff in
 Vanllia, with observed task termination and bounded failure/timeout handling.
 The std fixtures use direct-Kernel QEMU execution on one qualified Hart.
-Gamma rejects SMP topology qualification, so std execution on two Harts remains
+Delta rejects SMP topology qualification, so std execution on two Harts remains
 unverified and unsupported by this provider revision. System Loader and physical
 hardware validation are tracked separately. Toolchain CI checks host behavior and
 target compilation and the native-child timeout regression. Direct Kernel QEMU
