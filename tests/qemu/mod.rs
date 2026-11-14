@@ -200,18 +200,33 @@ fn kernel_revision() -> String {
     revision
 }
 
+fn locked_kernel_revision(lock: &str) -> String {
+    let lock: toml::Value = toml::from_str(lock).unwrap();
+    lock["package"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"].as_str() == Some("kernel-api"))
+        .unwrap()["source"]
+        .as_str()
+        .unwrap()
+        .rsplit_once('#')
+        .unwrap()
+        .1
+        .to_owned()
+}
+
 #[test]
-#[ignore = "requires ABI v9 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v9() {
+#[ignore = "requires ABI v11 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v11() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
     let manifest = include_str!("../target/startup/Cargo.toml");
-    let manifest_config: toml::Value = toml::from_str(manifest).unwrap();
     assert_eq!(
-        manifest_config["dependencies"]["kernel-api"]["rev"].as_str(),
-        Some(kernel_revision.as_str()),
-        "boot with the Kernel revision pinned by the startup fixture"
+        kernel_revision,
+        locked_kernel_revision(include_str!("../target/startup/Cargo.lock")),
+        "boot with the Kernel revision resolved by the startup fixture"
     );
     for (path, contents) in [
         ("tests/target/startup/Cargo.toml", manifest.as_bytes()),
@@ -255,15 +270,15 @@ fn std_main_allocator_and_termination() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
-    let pin: toml::Value = toml::from_str(include_str!("../target/std/Cargo.toml")).unwrap();
-    let pinned = pin["dependencies"]["kernel-api"]["rev"].as_str().unwrap();
+    let pinned = locked_kernel_revision(include_str!("../target/std/Cargo.lock"));
     assert_eq!(
         kernel_revision, pinned,
         "boot with the Kernel revision pinned by the std fixture"
     );
     let launcher = build_launcher();
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
-    for harts in [1, 2] {
+    // Gamma qualifies native publication/retirement only on one Hart.
+    for harts in [1] {
         // The pinned Kernel's memory observer is Task 2. The launcher creates
         // broker 3, Rust main 4 and the first Rust worker 5.
         for (name, task, reason, value, note) in [

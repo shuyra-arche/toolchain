@@ -12,16 +12,17 @@ use kernel_api::{
         identity::{Mark, PendId, TaskId},
         modifiable::Modifiable,
         pend::{
-            AccordRequest, AccordTarget, CreationRights, Distributable, Limits, Operations,
-            PendInfo, PendRange, PendStatus,
+            AccordRequest, AccordTarget, CreationRights, Distributable, Limits, NestRights,
+            NestScope, Operations, PendInfo, PendScope, PendStatus,
         },
         sign::{SignRights, SignSource},
-        unit::{UnitCreate, UnitInfo, UnitQuery, UnitTarget},
+        unit::{CreatedUnit, UnitCreate, UnitInfo, UnitQuery, UnitTarget},
         wait::Wait,
     },
 };
 use kernel_client::call::{pend, room, sign, unit};
 
+mod memory;
 mod pages;
 
 const IDLE: u32 = 0;
@@ -176,7 +177,7 @@ fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker
     }
     .to_bytes();
     let task = match unit::create(address(&descriptor)) {
-        Ok(UnitTarget::Task(task)) => task,
+        Ok(CreatedUnit::Task(task)) => task,
         Ok(_) => super::abort_internal(),
         Err(_) => return Worker::Vacant,
     };
@@ -188,7 +189,7 @@ fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker
             operations: Operations::Sign(SignRights::TRIGGER),
             modifiable: Modifiable::No,
             distributable: Distributable::No,
-            range: PendRange::Inherit,
+            scope: PendScope::Object,
         },
         mark: Mark::NONE,
     }
@@ -209,7 +210,7 @@ fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker
 }
 
 struct Broker {
-    license: PendId,
+    pages: pages::Pages,
     endpoint: PendId,
     main: TaskId,
     workers: [Worker; WORKERS],
@@ -218,9 +219,9 @@ struct Broker {
 impl Broker {
     fn command(&mut self, request: Request) -> usize {
         match request {
-            Request::Allocate { size, align } => pages::allocate(self.license, size, align),
+            Request::Allocate { size, align } => self.pages.allocate(size, align),
             Request::Free { address } => {
-                pages::free(address);
+                self.pages.free(address);
                 0
             }
             Request::Spawn {
@@ -322,12 +323,25 @@ pub(super) fn run(main: usize) -> ! {
         matches!(ops, Operations::None(rights)
         if rights.contains(CreationRights::FLAT | CreationRights::SIGN))
     });
+    let space = find(|ops| {
+        matches!(ops, Operations::Nest(rights)
+        if rights.contains(NestRights::INSPECT | NestRights::RESERVE))
+    });
+    let mut info = [0; PendInfo::SIZE];
+    pend::inspect(space, VirtAddr::new(info.as_mut_ptr() as usize))
+        .unwrap_or_else(|_| super::abort_internal());
+    if PendInfo::from_bytes(&info)
+        .is_none_or(|info| info.limits.scope != PendScope::Nest(NestScope::Whole))
+    {
+        super::abort_internal();
+    }
+    let pages = pages::Pages::new(license, space);
     let endpoint = sign::create(license).unwrap_or_else(|_| super::abort_internal());
     let Worker::Running(main) = spawn(endpoint, main, super::MAIN_STACK, &[]) else {
         super::abort_internal();
     };
     Broker {
-        license,
+        pages,
         endpoint,
         main,
         workers: [Worker::Vacant; WORKERS],

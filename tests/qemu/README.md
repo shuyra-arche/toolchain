@@ -7,34 +7,62 @@ probes. The assembled System Loader path is tracked in Vanllia.
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
 
-## ABI v9 startup
+## ABI v11 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
-`platform/riscv` at `eb37b0b0db299513274864cec23cee509a3cd3cc` (the integration
-revision used by this Kernel's CI), with both `kernel` and `kernel-api` resolved
-to the startup fixture's Kernel revision. Refresh the platform lockfile before
-building the image. Use the resulting ELF with `build/bootstrap.json`:
+`platform/riscv` at `dd32c35dbb67e2e78edb00ad35f968d16423249e` (the
+platform source used by Gamma's native acceptance), with both `kernel` and
+`kernel-api` resolved
+to the startup fixture's Kernel tag `26.11.14-preview-Gamma`. In a dedicated
+integration checkout, replace the platform's historical `rev` selection and
+remove `features = ["memory-v11"]` from both dependencies. Refresh its lockfile
+before building the image:
+
+```sh
+cargo +nightly update --manifest-path platform/riscv/Cargo.toml -p kernel
+cargo +nightly build --locked --release --target riscv64gc-unknown-none-elf \
+  --manifest-path platform/riscv/Cargo.toml
+```
+
+Use the resulting normal platform ELF with `build/bootstrap.json`:
 
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=23dec6b30e1ec08f42d3701e2613acd8c562c459 \
+SHUYRA_KERNEL_REVISION=9a35dd5420474ebe75a6b5f3e4589a398745e32c \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu startup_abi_v9 -- --ignored --nocapture
+cargo +nightly test --locked --test qemu startup_abi_v11 -- --ignored --nocapture
 ```
 
-This probe validates the Capsule v2/ABI v9 initrd with Kernel API. The Kernel
+This probe validates the Capsule v2/ABI v11 initrd with Kernel API. The Kernel
 supplies the initial View and Ledger argument words, which the startup ELF
-reads through its pointer/count entry contract before calling `Unit.Exit` with
-`ExitScope::Task`. The probe checks the number
+reads and validates through its pointer/count entry contract before calling
+`Unit.Exit` with `ExitScope::Task`. The probe checks the number
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
-## ABI v9 std backend
+## ABI v11 std backend
 
-Run Toolchain's `build-std` command and use the same Kernel image as the startup
-probe. The QEMU test builds the no-std launcher with the
+Run Toolchain's `build-std` command. Gamma's native memory backend requires
+trusted RAM qualification and rejects qualification with more than one Hart.
+The normal startup image does not install those facts. Use the test-only
+[`platform.rs`](platform.rs) entry with the same dedicated Vanllia checkout and
+Gamma tag selection described above:
+
+```sh
+cp /absolute/toolchain/tests/qemu/platform.rs platform/riscv/src/main.rs
+cargo +nightly build --locked --release --target riscv64gc-unknown-none-elf \
+  --manifest-path platform/riscv/Cargo.toml
+```
+
+Supply this rebuilt ELF for std only. This entry admits only QEMU `virt`, one
+Hart, 256 MiB ordinary RAM and no external devices. It qualifies local CPU
+visibility, instruction synchronization and retirement; it is not a hardware
+qualification or a general platform default. Do not use it for the two-Hart
+startup probe. Toolchain has no source dependency on Vanllia or its build library.
+
+The QEMU test builds the no-std launcher with the
 `riscv64gc-unknown-none-elf` target. Install it with
 `rustup target add --toolchain nightly riscv64gc-unknown-none-elf`.
 The backtrace probe requires OpenSBI with the debug console extension (DBCN)
@@ -43,17 +71,17 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=23dec6b30e1ec08f42d3701e2613acd8c562c459 \
+SHUYRA_KERNEL_REVISION=9a35dd5420474ebe75a6b5f3e4589a398745e32c \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
 ```
 
-`SHUYRA_QEMU` selects the native QEMU binary. Each scenario runs on one and
-two harts with a 20-second timeout. The launcher checks the retained Team and
-initiating Task results through `Unit.Inspect` and waits for Team retirement.
+`SHUYRA_QEMU` selects the native QEMU binary. Each std scenario runs on one
+qualified Hart with a 20-second timeout. Startup runs on one and two Harts.
+The launcher checks the retained Team and initiating Task results through `Unit.Inspect` and waits for Team retirement.
 The host verifies the admitted hart count, the Kernel exit records and
-all-tasks-exited shutdown. The pinned ABI v9 Kernel reserves Task 2 for its
+all-tasks-exited shutdown. The pinned ABI v11 Kernel reserves Task 2 for its
 memory observer, so the launcher expects broker 3, Rust main 4 and first worker 5.
 
 | Fixture | Exit value | Reason | Kernel note |
@@ -84,7 +112,8 @@ expiry, invalid addresses, wake-one/broadcast, finite-timeout
 overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. The backtrace probe resolves the
 main and worker call chains from the exact fixture ELF and records both
-symbolized traces. The opt-in test covers 24 QEMU runs.
+symbolized traces. The std test covers 12 QEMU runs; startup adds two.
+Two-Hart std execution is unsupported by Gamma's native memory provider and is not claimed as verified.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned

@@ -36,14 +36,21 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`23dec6b30e1ec08f42d3701e2613acd8c562c459`](https://github.com/shuyra-arche/kernel/tree/23dec6b30e1ec08f42d3701e2613acd8c562c459) — ABI v9 |
+| Kernel API/Client (startup, std and QEMU) | [`26.11.14-preview-Gamma`](https://github.com/shuyra-arche/kernel/releases/tag/26.11.14-preview-Gamma) — ABI/Ledger v11; lockfiles resolve `9a35dd5420474ebe75a6b5f3e4589a398745e32c` |
 
 Use the matching Kernel and Capsule v2 for both targets.
 
-ABI v9 mapping control uses the Memo Pend returned by Cell Create. The broker
-and launcher insert Page associations with Cell Insert, then publish them.
-They retain the Memo authority until withdrawal and deletion finish. Slot
-ownership transfers use the separate Push/Pull contract.
+ABI v11 uses native Flat/Nest descriptors through Kernel Client's memory API.
+The broker retains its source Flat and Reservation Pend through Occupy, Insert,
+Publish, Retract, Remove and Release, and deletes the Flat only after retirement.
+Pending operations and delivery failures are resolved with the original
+RequestId; only explicitly rejected Busy/Stale requests can be retried.
+
+Gamma requires a trusted, qualified RAM topology for native publication and
+retirement, currently on a single Hart. The [QEMU instructions](tests/qemu/README.md)
+provide a bounded test platform for this contract. Rebuild the Kernel image,
+Capsule, Ledger and all consumers together; old Cell and Share Open/Shut calls
+are rejected. No `memory-v11` feature is used.
 
 Successful builds write `build/bootstrap.json` with the compiler identity, a
 fingerprint of the installed Rust library source tree, hashes of fixture inputs,
@@ -107,7 +114,7 @@ licensing notices are retained in the generated tree.
 | Entry | `_start` initializes the process broker. The broker creates the Rust main Task, which installs TLS and invokes rustc's generated `main`. `std::env::args()` is empty. |
 | Normal return | Upstream `std::rt` calls user `main` and `Termination::report`. After normal cleanup and TLS destructors, the main Task commits the Team exit value through `Unit.Exit(Team)`. |
 | Explicit exit / abort | `process::exit` preserves the 32-bit code in the Team result. Panic and allocation-error handling use the Kernel panic reason and abort without unwinding. |
-| Allocation | A process-shared `TalcLock` obtains backing pages through the broker. The broker holds the private Cell authority and publishes or retracts its Internal Memos. |
+| Allocation | A process-shared `TalcLock` obtains backing pages through the broker. The broker retains private Flat and Reservation authority and publishes or retracts its Memos. |
 | Failure / realloc | The broker retries transient mapping contention, rolls back failed publication and returns null for failed allocation. Failed realloc preserves the original allocation. |
 
 Talc 5.1.1 reuses and coalesces small allocations in shared heaps. Backing blocks
@@ -118,7 +125,8 @@ impossible sizes are rejected before Talc's source-size arithmetic.
 
 The process broker runs in the initial Task of a Team configured with
 `member_exit`. The launcher grants that Task a `None` Pend with `FLAT | SIGN`
-before resuming it. The broker uses the grant to create backing Slots and a
+before resuming it, together with a limited Whole-Nest Pend for Inspect/Reserve.
+The broker uses these grants to create backing Flats, Reservations and a
 Sign endpoint. Worker Tasks receive a narrow Trigger branch for the endpoint.
 The shared mailbox uses address-space-private `Room.WaitValue` for callers and
 a retained Sign notification for the broker. Backing allocation and cleanup
@@ -195,15 +203,15 @@ not execute the programs. Outputs are under
   than hang or return normally.
 - `std-backtrace`: main and worker captures, with the worker's trace formatted
   after it exits and both call chains resolved by the host probe.
-- `std-parallelism`: ordinary pool size on one and two harts.
+- `std-parallelism`: ordinary pool size on the qualified single-Hart platform.
 
 Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
 `tests/qemu/`. It checks these ELF hashes, validates their format through the
 public inspect CLI, and encodes the Kernel boot capsule using Kernel API's public
 format and parser. The native QEMU child has a bounded timeout and captured logs.
-The test requires matching Kernel exit records and all-tasks-exited shutdown on
-one and two harts. Evidence is stored under `target/qemu/<run>/`, separately from
-the build receipt.
+The test requires matching Kernel exit records and all-tasks-exited shutdown.
+Startup runs on one and two Harts; Gamma std runs on one qualified Hart.
+Evidence is stored under `target/qemu/<run>/`, separately from the build receipt.
 
 The startup fixture boots as Kernel's initial supervisor Task. A test launcher
 starts the std fixtures in opted-in User Teams and observes their Task and Team
@@ -212,7 +220,7 @@ artifact-handoff tests.
 
 ## Executable contract
 
-The ABI v9 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v9-startup)
+The ABI v11 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v11-startup)
 that boots Capsule v2 and checks Kernel termination on one and two harts.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
@@ -222,7 +230,8 @@ that boots Capsule v2 and checks Kernel termination on one and two harts.
   count in `a1`. The fixture initializes `gp`, preserves these arguments and
   never returns through an undefined caller address.
 - The fixture checks entry registers, argument readability, zero-filled BSS and
-  initialized writable data. It then calls Kernel Client `unit::exit` with
+  initialized writable data, and the ABI v11 Kernel Ledger. It then calls Kernel
+  Client `unit::exit` with
   `ExitScope::Task`, result zero, reason zero and note `toolchain: startup passed`.
   Failures report nonzero reasons.
   Kernel calls use the Client's `ebreak` transport, not an assumed Unix syscall.
@@ -236,6 +245,7 @@ The fixture does not implement the legacy Env/Execution startup handshake.
 
 ```sh
 cargo +nightly fmt --all -- --check
+rustfmt +nightly --edition 2024 --check tests/qemu/platform.rs
 rg --files --null rust/library -g '*.rs' | xargs -0 rustfmt +nightly --edition 2024 --check
 cargo +nightly fmt --manifest-path tests/target/startup/Cargo.toml -- --check
 cargo +nightly fmt --manifest-path tests/target/std/Cargo.toml -- --check
@@ -252,8 +262,10 @@ Host checks and the target build have passed. Vanllia's planner can select the
 minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
 Assembled execution still needs a compatible Toolchain artifact handoff in
 Vanllia, with observed task termination and bounded failure/timeout handling.
-The std fixtures are verified through direct-Kernel QEMU execution on one and
-two harts. System Loader and physical hardware validation are tracked separately. Toolchain CI checks host behavior and
+The std fixtures use direct-Kernel QEMU execution on one qualified Hart.
+Gamma rejects SMP topology qualification, so std execution on two Harts remains
+unverified and unsupported by this provider revision. System Loader and physical
+hardware validation are tracked separately. Toolchain CI checks host behavior and
 target compilation and the native-child timeout regression. Direct Kernel QEMU
 execution is opt-in in this repository; Vanllia owns assembled-system scenarios.
 

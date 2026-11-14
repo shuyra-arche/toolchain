@@ -14,8 +14,8 @@ test = false
 bench = false
 
 [dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "23dec6b30e1ec08f42d3701e2613acd8c562c459" }
-kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", rev = "23dec6b30e1ec08f42d3701e2613acd8c562c459" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", tag = "26.11.14-preview-Gamma" }
+kernel-client = { git = "https://github.com/shuyra-arche/kernel.git", tag = "26.11.14-preview-Gamma" }
 
 [profile.release]
 panic = "abort"
