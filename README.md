@@ -36,7 +36,7 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | `12cb1b5ae7fcd57b46cc0103a0f30ea29631724e` — ABI/Ledger 13, Capsule format 2 |
+| Kernel API/Client (startup, std and QEMU) | `5da3ae3e0b971f34a003a31d344ee20593725e53` — ABI/Ledger 13, Capsule format 2 |
 
 All Kernel manifests and locks select that published full `rev`, including the
 nested ABI macros at `api/abi-macros`. This is the coordinated candidate for

@@ -10,8 +10,8 @@ SHA-256. The suite never downloads or substitutes these inputs.
 ## ABI 13 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
-`platform/riscv` at `c2d56c14efac3373f54b4a8b0ba97a4a337724d6`, which selects
-Kernel `12cb1b5ae7fcd57b46cc0103a0f30ea29631724e` (ABI/Ledger 13).
+`platform/riscv` at `e195b1d85963bcaeac672c175cb9df0225df7a66`, which selects
+Kernel `5da3ae3e0b971f34a003a31d344ee20593725e53` (ABI/Ledger 13).
 Use a dedicated integration checkout and its committed lockfile:
 
 ```sh
@@ -24,7 +24,7 @@ Use the resulting normal platform ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=12cb1b5ae7fcd57b46cc0103a0f30ea29631724e \
+SHUYRA_KERNEL_REVISION=5da3ae3e0b971f34a003a31d344ee20593725e53 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu startup_abi_v13 -- --ignored --nocapture
@@ -66,7 +66,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=12cb1b5ae7fcd57b46cc0103a0f30ea29631724e \
+SHUYRA_KERNEL_REVISION=5da3ae3e0b971f34a003a31d344ee20593725e53 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
