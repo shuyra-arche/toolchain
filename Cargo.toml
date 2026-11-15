@@ -22,8 +22,11 @@ name = "bootstrap"
 path = "tests/bootstrap/mod.rs"
 
 [dev-dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "b2eb37e2af134e4bb4248df454c437b06c1f93c0" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "789ffd19b5359f3de172fb9aad8a61f6a7113a64" }
 
 [[test]]
 name = "qemu"
 path = "tests/qemu/mod.rs"
+
+# Remain independent when checked out inside a composition workspace.
+[workspace]

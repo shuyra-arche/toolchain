@@ -42,7 +42,7 @@ diff --git a/dependencies/kernel-api/Cargo.toml b/dependencies/kernel-api/Cargo.
  default-features = false
  
  [dependencies.kernel-api-macros]
--path = "../tools/abi-macros"
+-path = "abi-macros"
 +path = "../kernel-api-macros"
  
  [dev-dependencies]

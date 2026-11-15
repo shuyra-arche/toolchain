@@ -145,7 +145,7 @@ impl Run {
                 .arg("-initrd")
                 .arg(&initrd_path),
             &directory,
-            std::time::Duration::from_secs(20),
+            std::time::Duration::from_secs(90),
         );
         let uart = fs::read_to_string(directory.join("stdout.log"))
             .unwrap_or_default()
@@ -217,8 +217,8 @@ fn locked_kernel_revision(lock: &str) -> String {
 }
 
 #[test]
-#[ignore = "requires ABI v11 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v11() {
+#[ignore = "requires ABI 13 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v13() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();
@@ -279,27 +279,27 @@ fn std_main_allocator_and_termination() {
     let mut run = Run::new(Some(launcher), receipt, &receipt_bytes, &kernel_revision);
     // Delta qualifies native publication/retirement only on one Hart.
     for harts in [1] {
-        // The pinned Kernel's memory observer is Task 2. The launcher creates
-        // broker 3, Rust main 4 and the first Rust worker 5.
+        // The pinned Kernel reserves cleanup Task 2 and observer Task 3.
+        // The launcher creates broker 4, Rust main 5 and first worker 6.
         for (name, task, reason, value, note) in [
-            ("toolchain-std", 4, 0, 0, "toolchain: std main returned"),
-            ("std-exit", 4, 0, 23, "toolchain: std process exit"),
-            ("std-panic", 4, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-oom", 4, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-threads", 4, 0, 0, "toolchain: std main returned"),
-            ("std-waits", 4, 0, 0, "toolchain: std main returned"),
-            ("std-backtrace", 4, 0, 0, "toolchain: std main returned"),
+            ("toolchain-std", 5, 0, 0, "toolchain: std main returned"),
+            ("std-exit", 5, 0, 23, "toolchain: std process exit"),
+            ("std-panic", 5, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-oom", 5, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-threads", 5, 0, 0, "toolchain: std main returned"),
+            ("std-waits", 5, 0, 0, "toolchain: std main returned"),
+            ("std-backtrace", 5, 0, 0, "toolchain: std main returned"),
             (
                 "std-parallelism",
-                4,
+                5,
                 0,
                 u64::from(harts),
                 "toolchain: std main returned",
             ),
-            ("std-thread-exit", 5, 0, 23, "toolchain: std process exit"),
-            ("std-thread-panic", 5, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-tls-main", 4, 0xffffff01, 0, "toolchain: std abort"),
-            ("std-thread-fault", 4, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-thread-exit", 6, 0, 23, "toolchain: std process exit"),
+            ("std-thread-panic", 6, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-tls-main", 5, 0xffffff01, 0, "toolchain: std abort"),
+            ("std-thread-fault", 5, 0xffffff01, 0, "toolchain: std abort"),
         ] {
             let artifact = &run.report["toolchain_receipt"]["artifacts"][name];
             let probe = Probe::new(

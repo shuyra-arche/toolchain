@@ -62,6 +62,14 @@ impl Pages {
     }
 
     pub(super) fn allocate(&mut self, size: usize, align: usize) -> usize {
+        self.allocate_guarded(size, align, 0)
+    }
+
+    pub(super) fn stack(&mut self, size: usize) -> usize {
+        self.allocate_guarded(size, PAGE_SIZE, 1)
+    }
+
+    fn allocate_guarded(&mut self, size: usize, align: usize, guard: usize) -> usize {
         let align = align.max(align_of::<Header>());
         let Some(prefix) = size_of::<Header>().checked_next_multiple_of(align) else {
             return 0;
@@ -98,7 +106,7 @@ impl Pages {
                 expected: status.version,
                 reservation: kernel_api::model::nest::ReserveRequest {
                     placement,
-                    count: PageCount::new(count).unwrap(),
+                    count: PageCount::new(count + guard).unwrap(),
                     level: CellLevel::new(0).unwrap(),
                     access: 6,
                 },
@@ -117,7 +125,13 @@ impl Pages {
         let memo = MemoPosition::new(token, nest, reservation, 0).unwrap();
         for page in 0..count {
             let slot = SlotPosition::new(flat.token(), flat.flat(), page).unwrap();
-            let target = MemoPosition::new(token, nest, reservation, page).unwrap();
+            let target = MemoPosition::new(
+                token,
+                nest,
+                reservation,
+                page + if page == 0 { 0 } else { guard },
+            )
+            .unwrap();
             let occupied = self.change(|memory| {
                 let Snapshot::Slot(status) = memory.inspect(Query::Slot(slot)) else {
                     super::super::abort_internal()
@@ -158,16 +172,32 @@ impl Pages {
                 })
             });
             if published.is_err() {
-                self.retire(memo, count);
+                self.retire(memo, count + guard);
                 self.delete(flat);
                 return 0;
             }
         }
-        let data = base.get() + prefix;
+        let data = base.get() + guard * PAGE_SIZE + prefix;
         unsafe {
-            ((data - size_of::<Header>()) as *mut Header).write(Header { flat, memo, count });
+            ((data - guard * PAGE_SIZE - size_of::<Header>()) as *mut Header).write(Header {
+                flat,
+                memo,
+                count: count + guard,
+            });
         }
         data
+    }
+
+    /// Live stack storage owned by this broker. The lower guard and in-band
+    /// header page are excluded from the Rust stack bounds. The guard sits
+    /// between the header and usable stack, so overflow cannot corrupt the owner.
+    pub(super) fn stack_capacity(&self, data: usize) -> usize {
+        let header = unsafe { &*((data - PAGE_SIZE - size_of::<Header>()) as *const Header) };
+        (header.count - 2) * PAGE_SIZE
+    }
+
+    pub(super) fn free_stack(&mut self, data: usize) {
+        self.free(data - PAGE_SIZE);
     }
 
     fn delete(&mut self, flat: SlotPosition) {
@@ -185,6 +215,7 @@ impl Pages {
             }
         })
         .unwrap_or_else(|_| super::super::abort_internal());
+        pend::return_(flat.token()).unwrap_or_else(|_| super::super::abort_internal());
     }
 
     fn retire(&mut self, first: MemoPosition, count: usize) {
@@ -242,6 +273,7 @@ impl Pages {
             }
         })
         .unwrap_or_else(|_| super::super::abort_internal());
+        pend::return_(first.token()).unwrap_or_else(|_| super::super::abort_internal());
     }
 
     pub(super) fn free(&mut self, data: usize) {

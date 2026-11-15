@@ -27,7 +27,7 @@ pub struct State {
 }
 impl State {
     pub fn new(notification: PendId, args: *const usize, count: usize, size: usize) -> Self {
-        // UnitCreate::Task packs the copied argument words at the stack top.
+        // The Runtime broker places its argument words at the prepared stack top.
         // The broker requests a page-aligned stack size for every Rust Task.
         let top = args.addr() + count * size_of::<usize>();
         let bottom = top

@@ -7,14 +7,12 @@ probes. The assembled System Loader path is tracked in Vanllia.
 Both probes are opt-in. Supply an explicit OpenSBI firmware and its expected
 SHA-256. The suite never downloads or substitutes these inputs.
 
-## ABI v11 startup
+## ABI 13 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
-`platform/riscv` at `b5468739f2d7e36d64198de743a13d6ccabc6666`. This verified
-integration revision already selects the startup fixture's exact Kernel
-`rev = "b2eb37e2af134e4bb4248df454c437b06c1f93c0"`, published as
-`26.11.14-preview-Delta`, without an ABI feature. Use a dedicated integration
-checkout and its committed lockfile:
+`platform/riscv` at `0eb086a2416eee8921416b12bf94819b30b6bb1f`, which selects
+Kernel `789ffd19b5359f3de172fb9aad8a61f6a7113a64` (ABI/Ledger 13).
+Use a dedicated integration checkout and its committed lockfile:
 
 ```sh
 cargo +nightly build --locked --release --target riscv64gc-unknown-none-elf \
@@ -26,26 +24,26 @@ Use the resulting normal platform ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=b2eb37e2af134e4bb4248df454c437b06c1f93c0 \
+SHUYRA_KERNEL_REVISION=789ffd19b5359f3de172fb9aad8a61f6a7113a64 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
-cargo +nightly test --locked --test qemu startup_abi_v11 -- --ignored --nocapture
+cargo +nightly test --locked --test qemu startup_abi_v13 -- --ignored --nocapture
 ```
 
-This probe validates the Capsule v2/ABI v11 initrd with Kernel API. The Kernel
+This probe validates the Capsule v2/ABI 13 initrd with Kernel API. The Kernel
 supplies the initial View and Ledger argument words, which the startup ELF
 reads and validates through its pointer/count entry contract before calling
 `Unit.Exit` with `ExitScope::Task`. The probe checks the number
 of admitted harts, exactly one Kernel exit record for task 1 with reason zero
 and note `toolchain: startup passed`, and successful all-tasks-exited shutdown.
 
-## ABI v11 std backend
+## ABI 13 std backend
 
-Run Toolchain's `build-std` command. Delta's native memory backend requires
-trusted RAM qualification and rejects qualification with more than one Hart.
+Run Toolchain's `build-std` command. The native memory backend requires trusted RAM qualification; this test
+platform deliberately admits only one Hart.
 The normal startup image does not install those facts. Use the test-only
 [`platform.rs`](platform.rs) entry with the same dedicated Vanllia checkout and
-exact Delta revision selection described above:
+exact provider revision selection described above:
 
 ```sh
 cp /absolute/toolchain/tests/qemu/platform.rs platform/riscv/src/main.rs
@@ -68,18 +66,19 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=b2eb37e2af134e4bb4248df454c437b06c1f93c0 \
+SHUYRA_KERNEL_REVISION=789ffd19b5359f3de172fb9aad8a61f6a7113a64 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
 ```
 
 `SHUYRA_QEMU` selects the native QEMU binary. Each std scenario runs on one
-qualified Hart with a 20-second timeout. Startup runs on one and two Harts.
+qualified Hart with a 90-second host timeout (60 seconds for guest execution and 15 for retirement). Startup runs on one and two Harts.
 The launcher checks the retained Team and initiating Task results through `Unit.Inspect` and waits for Team retirement.
 The host verifies the admitted hart count, the Kernel exit records and
-all-tasks-exited shutdown. The pinned ABI v11 Kernel reserves Task 2 for its
-memory observer, so the launcher expects broker 3, Rust main 4 and first worker 5.
+all-tasks-exited shutdown. The pinned ABI 13 Kernel reserves Task 2 for its
+cleanup service and Task 3 for its memory observer. The launcher expects broker 4,
+Rust main 5 and first worker 6.
 
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |
@@ -110,10 +109,15 @@ overflow, 256 producer/consumer races, std Condvar broadcast, park/unpark and
 termination of a blocked detached worker. The backtrace probe resolves the
 main and worker call chains from the exact fixture ELF and records both
 symbolized traces. The std test covers 12 QEMU runs; startup adds two.
-Two-Hart std execution is unsupported by Delta's native memory provider and is not claimed as verified.
+The std fixture qualifies only one Hart; two-Hart std execution is not claimed as verified.
 
 Run the native QEMU executable directly with `SHUYRA_QEMU`; shell wrappers and
 external helper processes are outside this small harness's scope. Each owned
 child is killed and reaped on timeout or an evidence/write/wait failure. Ordinary
 `cargo +nightly test --locked --test qemu` runs the host timeout/nonzero-exit
 regression and leaves guest execution ignored until explicitly requested.
+
+The launcher owns every child image/stack reservation and the lower guard.
+It explicitly releases and returns them after observing Team completion, before
+requesting Team deletion; execution exit alone is not memory retirement.
+All boot Capsules and std Tasks execute in User mode through User ECALL.

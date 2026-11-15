@@ -29,7 +29,14 @@ thread_local! {
     static LOCAL: Local = Local(VALUE.with(Cell::get));
     static LATE: Late = const { Late };
 }
+fn mark(text: &str) {
+    let _ = kernel_client::call::debug::put(
+        kernel_api::address::VirtAddr::new(text.as_ptr() as usize),
+        text.len(),
+    );
+}
 fn main() {
+    mark("THREADS begin\n");
     const N: usize = 6;
     VALUE.set(999);
     let barrier = Arc::new(Barrier::new(N));
@@ -56,6 +63,7 @@ fn main() {
                         assert!(data.iter().all(|value| *value == n + round));
                         drop(data);
                     }
+                    mark("THREADS allocations done\n");
                     for _ in 0..20 {
                         let mut guard = count.lock().unwrap();
                         thread::yield_now();
@@ -73,24 +81,29 @@ fn main() {
                 .unwrap(),
         );
     }
+    mark("THREADS created\n");
     for (n, worker) in workers.into_iter().enumerate() {
         assert!(worker.join().unwrap().iter().all(|v| *v == n));
     }
+    mark("THREADS joined\n");
     assert_eq!(VALUE.get(), 999);
     assert_eq!(*count.lock().unwrap(), N * 20);
     assert_eq!(DROPS.load(Ordering::SeqCst), N);
     assert_eq!(LATE_DROPS.load(Ordering::SeqCst), N);
     // Both the JoinHandle and child heap survive the intermediate creator's exit.
+    mark("THREADS nested\n");
     let nested = thread::spawn(|| thread::spawn(|| Box::new(vec![17; 2000])))
         .join()
         .unwrap();
     assert_eq!(nested.join().unwrap()[1999], 17);
+    mark("THREADS scoped\n");
     let mut borrowed = 0;
     thread::scope(|s| {
         s.spawn(|| borrowed = 42);
     });
     assert_eq!(borrowed, 42);
     // Detached worker's TLS cleanup and synchronization complete without join.
+    mark("THREADS detached\n");
     let signal = Arc::new((Mutex::new(false), Condvar::new()));
     let copy = signal.clone();
     drop(thread::spawn(move || {
@@ -128,9 +141,14 @@ fn main() {
     );
     // Retained exit receipts must not turn the Team's member limit into a
     // lifetime cap on sequential thread creation.
-    for _ in 0..1050 {
+    mark("THREADS sequential-reuse\n");
+    for index in 0..1050 {
+        if index % 250 == 0 {
+            mark("THREADS reuse checkpoint\n");
+        }
         thread::spawn(|| {}).join().unwrap();
     }
+    mark("THREADS sequential complete\n");
     // Main return must stop a detached worker which will never return itself.
     let ready = Arc::new(Barrier::new(2));
     let child_ready = ready.clone();
