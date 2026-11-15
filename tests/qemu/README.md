@@ -10,8 +10,8 @@ SHA-256. The suite never downloads or substitutes these inputs.
 ## ABI 13 startup
 
 Run Toolchain's `build` command. Build the normal `shuyra` ELF from Vanllia's
-`platform/riscv` at `5ec59a466ed5f05acb9c5559aa1cc5e91fa5dfa4`, which selects
-Kernel `9c0fc4da1ca4e41bd6ddea3cba2b5964c07323d2` (ABI/Ledger 13).
+`platform/riscv` at `0eb086a2416eee8921416b12bf94819b30b6bb1f`, which selects
+Kernel `789ffd19b5359f3de172fb9aad8a61f6a7113a64` (ABI/Ledger 13).
 Use a dedicated integration checkout and its committed lockfile:
 
 ```sh
@@ -24,7 +24,7 @@ Use the resulting normal platform ELF with `build/bootstrap.json`:
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/bootstrap.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=9c0fc4da1ca4e41bd6ddea3cba2b5964c07323d2 \
+SHUYRA_KERNEL_REVISION=789ffd19b5359f3de172fb9aad8a61f6a7113a64 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu startup_abi_v13 -- --ignored --nocapture
@@ -66,7 +66,7 @@ and a host `addr2line` that reads RV64 ELF files.
 ```sh
 SHUYRA_TOOLCHAIN_RECEIPT=/absolute/toolchain/build/std.json \
 SHUYRA_KERNEL_ELF=/absolute/vanllia/platform/riscv/target/riscv64gc-unknown-none-elf/release/shuyra \
-SHUYRA_KERNEL_REVISION=9c0fc4da1ca4e41bd6ddea3cba2b5964c07323d2 \
+SHUYRA_KERNEL_REVISION=789ffd19b5359f3de172fb9aad8a61f6a7113a64 \
 SHUYRA_OPENSBI=/absolute/fw_jump.bin \
 SHUYRA_FIRMWARE_SHA256=<sha256-of-the-selected-firmware> \
 cargo +nightly test --locked --test qemu std_main_allocator_and_termination -- --ignored --nocapture
@@ -77,7 +77,8 @@ qualified Hart with a 90-second host timeout (60 seconds for guest execution and
 The launcher checks the retained Team and initiating Task results through `Unit.Inspect` and waits for Team retirement.
 The host verifies the admitted hart count, the Kernel exit records and
 all-tasks-exited shutdown. The pinned ABI 13 Kernel reserves Task 2 for its
-memory observer, so the launcher expects broker 3, Rust main 4 and first worker 5.
+cleanup service and Task 3 for its memory observer. The launcher expects broker 4,
+Rust main 5 and first worker 6.
 
 | Fixture | Exit value | Reason | Kernel note |
 | --- | --- | --- | --- |

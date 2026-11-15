@@ -22,7 +22,7 @@ name = "bootstrap"
 path = "tests/bootstrap/mod.rs"
 
 [dev-dependencies]
-kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "9c0fc4da1ca4e41bd6ddea3cba2b5964c07323d2" }
+kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "789ffd19b5359f3de172fb9aad8a61f6a7113a64" }
 
 [[test]]
 name = "qemu"
