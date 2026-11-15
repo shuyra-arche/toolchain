@@ -27,3 +27,6 @@ kernel-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "9c0fc4
 [[test]]
 name = "qemu"
 path = "tests/qemu/mod.rs"
+
+# Remain independent when checked out inside a composition workspace.
+[workspace]
