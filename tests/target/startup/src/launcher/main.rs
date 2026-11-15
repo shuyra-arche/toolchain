@@ -27,8 +27,8 @@ use kernel_api::{
         },
         sign::SignSource,
         unit::{
-            ControlId, CreatedUnit, ExitCause, ExitScope, UnitCreate, UnitInfo, UnitQuery,
-            UnitState, UnitTarget,
+            ControlId, CreatedUnit, ExitCause, ExitScope, TaskStart, UnitCreate, UnitInfo,
+            UnitQuery, UnitState, UnitTarget,
         },
         wait::Wait,
     },
@@ -230,7 +230,7 @@ fn stage(
     share_view::derive(license, at(&spec)).unwrap()
 }
 
-fn map(memory: &mut Memory, token: PendId, space: PendId, region: Region) {
+fn map(memory: &mut Memory, token: PendId, space: PendId, region: Region) -> MemoPosition {
     let Target::View(ViewTarget::Share(view)) = pend_info(token).target else {
         panic!("expected Share")
     };
@@ -255,6 +255,7 @@ fn map(memory: &mut Memory, token: PendId, space: PendId, region: Region) {
             },
         );
     }
+    memo
 }
 
 fn delegate(
@@ -311,6 +312,8 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
         panic!("expected Team")
     };
     let image = Capsule::parse(program).unwrap();
+    let mut child_mappings = [None; 128];
+    assert!(image.count <= child_mappings.len());
     for index in 0..image.count {
         let region = image.region(index).unwrap();
         let data = &program[region.payload..region.payload + region.data_pages * PAGE_SIZE];
@@ -326,16 +329,39 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
                 Modifiable::No
             },
         );
-        map(&mut memory, source, child_space, region);
+        child_mappings[index] = Some(map(&mut memory, source, child_space, region));
     }
-    // The creator's Whole-Nest grant prepares the complete image. The child
-    // starts directly at its ELF entry and has not consumed any RequestIds.
+    let top = 0x3f_ffff_f000usize;
+    let pages = 32;
+    let bottom = top - pages * PAGE_SIZE;
+    let (guard, _) = reserve(
+        &mut memory,
+        child_space,
+        Placement::exact(VirtAddr::new(bottom - PAGE_SIZE), PAGE_SIZE).unwrap(),
+        1,
+        6,
+    );
+    let backing = stage(&mut memory, license, space, &[], pages, Modifiable::Yes);
+    let stack_mapping = map(
+        &mut memory,
+        backing,
+        child_space,
+        Region {
+            va: bottom,
+            pages,
+            data_pages: pages,
+            payload: 0,
+            flags: 6,
+        },
+    );
     let child = UnitCreate::Task {
         team: Some(team),
-        entry: VirtAddr::new(image.entry),
-        args: VirtAddr::new(0),
-        count: 0,
-        stack: VirtAddr::new(0),
+        start: TaskStart {
+            entry: VirtAddr::new(image.entry),
+            stack_pointer: VirtAddr::new(top),
+            arguments: VirtAddr::new(0),
+            argument_count: 0,
+        },
     }
     .to_bytes();
     let CreatedUnit::Task(task) = unit::create(at(&child)).unwrap() else {
@@ -360,7 +386,7 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
     let source = SignSource::Join { target };
     sign::attach(endpoint, source, 0).unwrap();
     unit::resume(UnitTarget::Task(task)).unwrap();
-    let deadline = room::clock().saturating_add(15_000_000_000);
+    let deadline = room::clock().saturating_add(60_000_000_000);
     loop {
         let at = room::clock().saturating_add(5_000_000).min(deadline);
         let reply = sign::listen(endpoint, Wait::At(at)).unwrap();
@@ -380,6 +406,31 @@ unsafe extern "C" fn launch(words: *const usize, count: usize) -> ! {
         assert_eq!(info.exit, Some((ExitCause::Reap, expected.1)));
     }
     sign::detach(endpoint, source).unwrap();
+    // Execution completion is separate from retirement of the Loader's target
+    // reservations. Keep their exact owners until each Release commits.
+    for memo in child_mappings
+        .into_iter()
+        .flatten()
+        .chain([stack_mapping, guard])
+    {
+        let Snapshot::Reservation(status) = memory.inspect(Query::Reservation {
+            token: memo.token(),
+            nest: memo.nest(),
+            reservation: memo.reservation(),
+        }) else {
+            panic!("Reservation")
+        };
+        memory
+            .mutate(Action::Release {
+                token: memo.token(),
+                nest: memo.nest(),
+                reservation: memo.reservation(),
+                expected: status.version,
+            })
+            .unwrap();
+        pend::return_(memo.token()).unwrap();
+    }
+    let deadline = room::clock().saturating_add(15_000_000_000);
     loop {
         match unit::delete(target) {
             Ok(()) => break,

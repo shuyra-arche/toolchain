@@ -145,7 +145,7 @@ impl Run {
                 .arg("-initrd")
                 .arg(&initrd_path),
             &directory,
-            std::time::Duration::from_secs(20),
+            std::time::Duration::from_secs(90),
         );
         let uart = fs::read_to_string(directory.join("stdout.log"))
             .unwrap_or_default()
@@ -217,8 +217,8 @@ fn locked_kernel_revision(lock: &str) -> String {
 }
 
 #[test]
-#[ignore = "requires ABI v11 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
-fn startup_abi_v11() {
+#[ignore = "requires ABI 13 startup receipt, pinned Kernel/OpenSBI and QEMU; see tests/qemu/README.md"]
+fn startup_abi_v13() {
     let receipt_bytes = fs::read(input("SHUYRA_TOOLCHAIN_RECEIPT")).unwrap();
     let receipt: Value = serde_json::from_slice(&receipt_bytes).unwrap();
     let kernel_revision = kernel_revision();

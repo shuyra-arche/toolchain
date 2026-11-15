@@ -16,7 +16,7 @@ use kernel_api::{
             NestScope, Operations, PendInfo, PendScope, PendStatus,
         },
         sign::{SignRights, SignSource},
-        unit::{CreatedUnit, UnitCreate, UnitInfo, UnitQuery, UnitTarget},
+        unit::{CreatedUnit, TaskStart, UnitCreate, UnitInfo, UnitQuery, UnitTarget},
         wait::Wait,
     },
 };
@@ -163,23 +163,69 @@ pub(crate) fn inspect(query: UnitQuery) -> Option<UnitInfo> {
 #[derive(Clone, Copy)]
 enum Worker {
     Vacant,
-    Running(TaskId),
-    Retiring(TaskId),
+    Running(TaskId, usize),
+    Retiring(TaskId, usize),
 }
 
-fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker {
+struct Workers(UnsafeCell<[Worker; WORKERS]>);
+// Only the one initial broker acquires this storage. Worker Tasks communicate
+// through MAILBOX/WORKER atomics and never borrow these memory owners.
+unsafe impl Sync for Workers {}
+static WORKER_STORAGE: Workers = Workers(UnsafeCell::new([Worker::Vacant; WORKERS]));
+fn worker_storage() -> &'static mut [Worker; WORKERS] {
+    static TAKEN: AtomicU32 = AtomicU32::new(0);
+    if TAKEN.compare_exchange(0, 1, Acquire, Relaxed).is_err() {
+        super::abort_internal();
+    }
+    unsafe { &mut *WORKER_STORAGE.0.get() }
+}
+
+fn spawn(
+    pages: &mut pages::Pages,
+    cache: &mut Option<usize>,
+    endpoint: PendId,
+    entry: usize,
+    stack: usize,
+    args: &[usize],
+) -> Worker {
+    // A single live mapping may be reused only after the previous Task is
+    // observed reclaimed and its record deleted. It is never released or lent
+    // to external hardware while cached; no retirement ticket is outstanding.
+    let owner = match cache.take() {
+        Some(owner) if pages.stack_capacity(owner) >= stack => owner,
+        Some(owner) => {
+            pages.free_stack(owner);
+            pages.stack(stack)
+        }
+        None => pages.stack(stack),
+    };
+    if owner == 0 {
+        return Worker::Vacant;
+    }
+    let at = owner + stack - args.len() * size_of::<usize>();
+    for (index, word) in args.iter().enumerate() {
+        unsafe {
+            ((at + index * size_of::<usize>()) as *mut usize).write(*word);
+        }
+    }
+
     let descriptor = UnitCreate::Task {
         team: None,
-        entry: VirtAddr::new(entry),
-        args: VirtAddr::new(args.as_ptr() as usize),
-        count: args.len() as u64,
-        stack: VirtAddr::new(stack),
+        start: TaskStart {
+            entry: VirtAddr::new(entry),
+            stack_pointer: VirtAddr::new(at & !15),
+            arguments: VirtAddr::new(at),
+            argument_count: args.len(),
+        },
     }
     .to_bytes();
     let task = match unit::create(address(&descriptor)) {
         Ok(CreatedUnit::Task(task)) => task,
         Ok(_) => super::abort_internal(),
-        Err(_) => return Worker::Vacant,
+        Err(_) => {
+            pages.free_stack(owner);
+            return Worker::Vacant;
+        }
     };
     let target = UnitTarget::Task(task);
     let grant = AccordRequest {
@@ -198,7 +244,7 @@ fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker
     let granted = pend::accord(address(&grant)).is_ok();
     let routed = granted && sign::attach(endpoint, source, 0).is_ok();
     if routed && unit::resume(target).is_ok() {
-        return Worker::Running(task);
+        return Worker::Running(task, owner);
     }
     if routed && sign::detach(endpoint, source).is_err() {
         super::abort_internal();
@@ -206,14 +252,15 @@ fn spawn(endpoint: PendId, entry: usize, stack: usize, args: &[usize]) -> Worker
     if unit::stop(target).is_err() {
         super::abort_internal();
     }
-    Worker::Retiring(task)
+    Worker::Retiring(task, owner)
 }
 
 struct Broker {
     pages: pages::Pages,
     endpoint: PendId,
     main: TaskId,
-    workers: [Worker; WORKERS],
+    stack_cache: Option<usize>,
+    workers: &'static mut [Worker; WORKERS],
 }
 
 impl Broker {
@@ -235,9 +282,16 @@ impl Broker {
                     return 0;
                 };
                 WORKER[slot].store(0, Release);
-                let worker = spawn(self.endpoint, entry, stack, &[start, slot, stack]);
+                let worker = spawn(
+                    &mut self.pages,
+                    &mut self.stack_cache,
+                    self.endpoint,
+                    entry,
+                    stack,
+                    &[start, slot, stack],
+                );
                 self.workers[slot] = worker;
-                if matches!(worker, Worker::Running(_)) {
+                if matches!(worker, Worker::Running(..)) {
                     slot + 1
                 } else {
                     release(slot);
@@ -249,12 +303,17 @@ impl Broker {
 
     fn retire(&mut self) -> Wait {
         let mut pending = false;
-        for worker in &mut self.workers {
-            let Worker::Retiring(task) = *worker else {
+        for worker in self.workers.iter_mut() {
+            let Worker::Retiring(task, owner) = *worker else {
                 continue;
             };
             match unit::delete(UnitTarget::Task(task)) {
-                Ok(()) => *worker = Worker::Vacant,
+                Ok(()) => {
+                    if let Some(previous) = self.stack_cache.replace(owner) {
+                        self.pages.free_stack(previous);
+                    }
+                    *worker = Worker::Vacant;
+                }
                 Err(error) if error.source == UnitFail::Busy => pending = true,
                 Err(_) => super::abort_internal(),
             }
@@ -275,7 +334,7 @@ impl Broker {
         let slot = self
             .workers
             .iter()
-            .position(|worker| matches!(worker, Worker::Running(id) if *id == task))
+            .position(|worker| matches!(worker, Worker::Running(id, _) if *id == task))
             .unwrap_or_else(|| super::abort_internal());
         if inspect(UnitQuery::Target(UnitTarget::Task(task)))
             .and_then(|info| info.exit)
@@ -286,7 +345,10 @@ impl Broker {
         }
         WORKER[slot].fetch_or(KERNEL_DONE, AcqRel);
         wake(&WORKER[slot]);
-        self.workers[slot] = Worker::Retiring(task);
+        let Worker::Running(_, owner) = self.workers[slot] else {
+            super::abort_internal();
+        };
+        self.workers[slot] = Worker::Retiring(task, owner);
     }
 
     fn serve(&mut self) -> ! {
@@ -335,16 +397,25 @@ pub(super) fn run(main: usize) -> ! {
     {
         super::abort_internal();
     }
-    let pages = pages::Pages::new(license, space);
+    let mut pages = pages::Pages::new(license, space);
     let endpoint = sign::create(license).unwrap_or_else(|_| super::abort_internal());
-    let Worker::Running(main) = spawn(endpoint, main, super::MAIN_STACK, &[]) else {
+    let mut stack_cache = None;
+    let Worker::Running(main, _) = spawn(
+        &mut pages,
+        &mut stack_cache,
+        endpoint,
+        main,
+        super::MAIN_STACK,
+        &[],
+    ) else {
         super::abort_internal();
     };
     Broker {
         pages,
         endpoint,
         main,
-        workers: [Worker::Vacant; WORKERS],
+        stack_cache,
+        workers: worker_storage(),
     }
     .serve()
 }

@@ -36,22 +36,22 @@ toolchain change is needed. Host and guest Cargo lockfiles are committed.
 | Input | Revision |
 | --- | --- |
 | Rust compiler and library source | Rolling `nightly`; actual version/commit/source hash in each build receipt |
-| Kernel API/Client (startup, std and QEMU) | [`26.11.14-preview-Delta`](https://github.com/shuyra-arche/kernel/releases/tag/26.11.14-preview-Delta) — ABI/Ledger v11; lockfiles resolve `b2eb37e2af134e4bb4248df454c437b06c1f93c0` |
+| Kernel API/Client (startup, std and QEMU) | `12cb1b5ae7fcd57b46cc0103a0f30ea29631724e` — ABI/Ledger 13, Capsule format 2 |
 
-All Kernel manifests use that full `rev`, matching Vanllia's Cargo Git source
-identity. Delta identifies the release; the composition does not mix `tag` and
-`rev` dependencies. Delta includes Kernel #175's native Nest creation lock fix;
-ABI/Ledger stay 11/11 and Capsule format stays 2.
+All Kernel manifests and locks select that published full `rev`, including the
+nested ABI macros at `api/abi-macros`. This is the coordinated candidate for
+Kernel #160/#206/#188, not a new release. Land Kernel before consumers.
+ABI 11/12 Capsules and the old Task descriptor require a rebuild.
 
 Use the matching Kernel and Capsule v2 for both targets.
 
-ABI v11 uses native Flat/Nest descriptors through Kernel Client's memory API.
+ABI 13 uses native Flat/Nest descriptors through Kernel Client's memory API.
 The broker retains its source Flat and Reservation Pend through Occupy, Insert,
 Publish, Retract, Remove and Release, and deletes the Flat only after retirement.
 Pending operations and delivery failures are resolved with the original
 RequestId; only explicitly rejected Busy/Stale requests can be retried.
 
-Delta requires a trusted, qualified RAM topology for native publication and
+Native memory requires a trusted, qualified RAM topology for native publication and
 retirement, currently on a single Hart. The [QEMU instructions](tests/qemu/README.md)
 provide a bounded test platform for this contract. Rebuild the Kernel image,
 Capsule, Ledger and all consumers together; old Cell and Share Open/Shut calls
@@ -145,6 +145,14 @@ completion after its closure and TLS destructors. A joined Task that ends
 before Rust completion aborts the Team. Spawn failure releases the closure.
 A `JoinHandle` can move to another thread or outlive its creator.
 
+The broker prepares each guarded stack and argument block through its own Flat
+and Reservation grants, then submits explicit target-Nest PC/SP/a0/a1 coordinates.
+The unmapped guard separates usable stack storage from its owner metadata.
+After Kernel reclamation and Task record deletion, it retains at most one live
+stack mapping for sequential reuse. That mapping is never released, exported or
+awaiting a retirement ticket while cached. Replacing it completes native mapping
+retirement, Flat deletion and Pend returns before forgetting the owner.
+
 The broker releases its Task receipts after Kernel reclamation. A Team creator
 that receives its own receipts must also release completed records to sustain
 sequential thread creation. Normal main return, explicit exit and panic-abort
@@ -215,17 +223,17 @@ Toolchain owns the opt-in [direct Kernel QEMU suite](tests/qemu/README.md) under
 public inspect CLI, and encodes the Kernel boot capsule using Kernel API's public
 format and parser. The native QEMU child has a bounded timeout and captured logs.
 The test requires matching Kernel exit records and all-tasks-exited shutdown.
-Startup runs on one and two Harts; Delta std runs on one qualified Hart.
+Startup runs on one and two Harts; std runs on one qualified Hart in this fixture.
 Evidence is stored under `target/qemu/<run>/`, separately from the build receipt.
 
-The startup fixture boots as Kernel's initial supervisor Task. A test launcher
+The startup Capsule and launcher execute as User Tasks. A test launcher
 starts the std fixtures in opted-in User Teams and observes their Task and Team
 exit values before retirement. Vanllia owns the assembled System Loader and
 artifact-handoff tests.
 
 ## Executable contract
 
-The ABI v11 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-v11-startup)
+The ABI 13 startup fixture has a [direct Kernel QEMU probe](tests/qemu/README.md#abi-13-startup)
 that boots Capsule v2 and checks Kernel termination on one and two harts.
 
 - Static ELF64, little-endian RV64GC/LP64D, entry at `0x10000`.
@@ -235,11 +243,11 @@ that boots Capsule v2 and checks Kernel termination on one and two harts.
   count in `a1`. The fixture initializes `gp`, preserves these arguments and
   never returns through an undefined caller address.
 - The fixture checks entry registers, argument readability, zero-filled BSS and
-  initialized writable data, and the ABI v11 Kernel Ledger. It then calls Kernel
+  initialized writable data, and the ABI 13 Kernel Ledger. It then calls Kernel
   Client `unit::exit` with
   `ExitScope::Task`, result zero, reason zero and note `toolchain: startup passed`.
   Failures report nonzero reasons.
-  Kernel calls use the Client's `ebreak` transport, not an assumed Unix syscall.
+  Kernel calls use the Client's User `ecall` transport, not an assumed Unix syscall.
 
 `inspect` validates this bootstrap subset and reports its SHA-256. It is a
 host-side check, not System's Loader or proof that an ELF has run. The exit call
@@ -268,8 +276,8 @@ minimum `system + toolchain.startup` composition via the fixture's `unit.toml`.
 Assembled execution still needs a compatible Toolchain artifact handoff in
 Vanllia, with observed task termination and bounded failure/timeout handling.
 The std fixtures use direct-Kernel QEMU execution on one qualified Hart.
-Delta rejects SMP topology qualification, so std execution on two Harts remains
-unverified and unsupported by this provider revision. System Loader and physical
+This std platform qualifies only one Hart; std execution on two Harts remains
+unverified by this fixture. System Loader and physical
 hardware validation are tracked separately. Toolchain CI checks host behavior and
 target compilation and the native-child timeout regression. Direct Kernel QEMU
 execution is opt-in in this repository; Vanllia owns assembled-system scenarios.
